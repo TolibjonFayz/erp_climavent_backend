@@ -1,6 +1,8 @@
 import { ConfigModule } from '@nestjs/config';
 import { Module } from '@nestjs/common';
 import { SequelizeModule } from '@nestjs/sequelize';
+import { UsersModule } from './users/users.module';
+import { User } from './users/models/user.model';
 
 @Module({
   imports: [
@@ -20,8 +22,9 @@ import { SequelizeModule } from '@nestjs/sequelize';
           rejectUnauthorized: false,
         },
       },
-      models: [],
+      models: [User],
     }),
+    UsersModule,
   ],
   controllers: [],
   providers: [],

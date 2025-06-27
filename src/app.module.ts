@@ -3,6 +3,8 @@ import { Module } from '@nestjs/common';
 import { SequelizeModule } from '@nestjs/sequelize';
 import { UsersModule } from './users/users.module';
 import { User } from './users/models/user.model';
+import { ComeAndGoesModule } from './come_and_goes/come_and_goes.module';
+import { LocationVideosModule } from './location_videos/location_videos.module';
 
 @Module({
   imports: [
@@ -25,6 +27,8 @@ import { User } from './users/models/user.model';
       models: [User],
     }),
     UsersModule,
+    ComeAndGoesModule,
+    LocationVideosModule,
   ],
   controllers: [],
   providers: [],

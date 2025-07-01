@@ -8,16 +8,26 @@ import {
   Delete,
   Res,
 } from '@nestjs/common';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginUserDto } from './dto/login-user.dto';
 import { UsersService } from './users.service';
 import { ApiProperty } from '@nestjs/swagger';
 import { Response } from 'express';
-import { UpdateUserDto } from './dto/update-user.dto';
-import { User } from './models/user.model';
 
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  //Register user
+  @ApiProperty({ description: 'Register user with username and password' })
+  @Post('register')
+  registerUser(
+    @Body() createUserDto: CreateUserDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.usersService.registerUser(createUserDto, res);
+  }
 
   //Login user
   @ApiProperty({ description: 'Login user with username and password' })

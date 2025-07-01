@@ -6,6 +6,7 @@ import { User } from './models/user.model';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Response } from 'express';
+import { CreateUserDto } from './dto/create-user.dto';
 
 @Injectable()
 export class UsersService {
@@ -13,6 +14,51 @@ export class UsersService {
     @InjectModel(User) private readonly UsersRepository: typeof User,
     private readonly jwtservice: JwtService,
   ) {}
+  // Register user
+  async registerUser(createUserDto: CreateUserDto, res: Response) {
+    //Check if user exists
+    const existingUser = await this.UsersRepository.findOne({
+      where: { username: createUserDto.username },
+    });
+    if (existingUser) {
+      return res
+        .status(409)
+        .json({ message: 'Foydalanuvchi nomi band', status: res.statusCode });
+    }
+
+    //Hash password
+    const hashedPassword = await bcrypt.hash(createUserDto.password, 7);
+
+    //Create new user
+    const newUser = await this.UsersRepository.create({
+      ...createUserDto,
+      password: hashedPassword,
+      is_admin: false,
+      refresh_token: '',
+    });
+
+    //Generate tokens
+    const tokens = await this.getTokens(newUser);
+    const hashed_refresh_token = await bcrypt.hash(tokens.refreshToken, 7);
+    const updateUser = await this.UsersRepository.update(
+      { refresh_token: hashed_refresh_token },
+      { where: { id: newUser.id }, returning: true },
+    );
+
+    //Cookie setting
+    res.cookie('refresh_token', tokens.refreshToken, {
+      maxAge: 15 * 24 * 60 * 60 * 10000,
+      httpOnly: true,
+    });
+
+    return {
+      message: "Foydalanuvchi muvaffaqiyatli ro'yxatdan o'tdi",
+      user: newUser,
+      tokens,
+      status: res.statusCode,
+    };
+  }
+
   // Login user
   async loginUser(loginuserDto: LoginUserDto, res: Response) {
     //Is user exists?
@@ -20,20 +66,21 @@ export class UsersService {
       where: { username: loginuserDto.username },
     });
     if (!user) {
-      return res
-        .status(404)
-        .json({ message: 'User not found', status: res.statusCode });
+      return res.status(404).json({
+        message: 'Foydalanuvchi nomi yoki maxfiy parol xato kiritildi',
+        status: res.statusCode,
+      });
     }
 
     //Check password
     const isPasswordValid = await bcrypt.compare(
       loginuserDto.password,
-      user.password,
+      user.dataValues.password,
     );
     if (!isPasswordValid) {
       return res
         .status(401)
-        .json({ message: 'Entered password is wrong', status: res.statusCode });
+        .json({ message: "Kiritilgan parol noto'gri", status: res.statusCode });
     }
 
     //Generate new tokens

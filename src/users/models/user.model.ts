@@ -9,7 +9,6 @@ interface UserAtr {
   username: string;
   password: string;
   is_admin: boolean;
-  access_token: string;
   refresh_token: string;
 }
 
@@ -49,10 +48,6 @@ export class User extends Model<User, UserAtr> {
   @ApiProperty({ example: 'false', description: 'Is this user - admin' })
   @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: false })
   is_admin: boolean;
-
-  @ApiProperty({ example: 'access_token', description: 'Access token of user' })
-  @Column({ type: DataType.STRING, allowNull: true })
-  access_token: string;
 
   @ApiProperty({
     example: 'refreshtoken',

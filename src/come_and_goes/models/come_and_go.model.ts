@@ -15,7 +15,8 @@ interface ComeAndGoAtr {
   when_gone: Date;
   when_came: Date;
   whereto: string;
-  location: string;
+  lat: string;
+  lng: string;
   dogovor_or_kp: string;
   dogovor_date: Date;
   company_name: string;
@@ -50,9 +51,13 @@ export class ComeAndGo extends Model<ComeAndGo, ComeAndGoAtr> {
   @Column({ type: DataType.STRING })
   whereto: string;
 
-  @ApiProperty({ example: 'Proyekt', description: 'Location' })
+  @ApiProperty({ example: 'Proyekt', description: 'Location latitude' })
   @Column({ type: DataType.STRING })
-  location: string;
+  lat: string;
+
+  @ApiProperty({ example: 'Proyekt', description: 'Location longitude' })
+  @Column({ type: DataType.STRING })
+  lng: string;
 
   @ApiProperty({ example: 'dogovor', description: 'Dogovor or kp' })
   @Column({ type: DataType.STRING })

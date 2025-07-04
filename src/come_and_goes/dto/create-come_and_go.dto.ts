@@ -19,8 +19,11 @@ export class CreateComeAndGoDto {
   })
   whereto: string;
 
-  @ApiProperty({ example: 'Proyekt', description: 'Location' })
-  location: string;
+  @ApiProperty({ example: 'Proyekt', description: 'Location latitude' })
+  lat: string;
+
+  @ApiProperty({ example: 'Proyekt', description: 'Location longitude' })
+  lng: string;
 
   @ApiProperty({ example: 'dogovor', description: 'Dogovor or kp' })
   dogovor_or_kp: string;

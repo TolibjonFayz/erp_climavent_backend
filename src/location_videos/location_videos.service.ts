@@ -28,4 +28,12 @@ export class LocationVideosService {
     });
     return allCGO;
   }
+
+  // Get all videos of a location
+  async getAllVideosOfALocation(id: number) {
+    const allCGO = await this.LocatoinVideoRepository.findAll({
+      where: { id: id },
+    });
+    return allCGO;
+  }
 }

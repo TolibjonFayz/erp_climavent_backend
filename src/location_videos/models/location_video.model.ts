@@ -12,7 +12,7 @@ import { User } from 'src/users/models/user.model';
 
 interface LocationVideoAtr {
   video_link: string;
-  video_text: string;
+  video_name: string;
   comeandgo_id: number;
   user_id: number;
 }
@@ -31,11 +31,11 @@ export class LocationVideo extends Model<LocationVideo, LocationVideoAtr> {
   video_link: string;
 
   @ApiProperty({
-    example: 'video_text',
+    example: 'video_name',
     description: 'Caption text of the video file',
   })
   @Column({ type: DataType.STRING })
-  video_text: string;
+  video_name: string;
 
   @ForeignKey(() => User)
   @ApiProperty({

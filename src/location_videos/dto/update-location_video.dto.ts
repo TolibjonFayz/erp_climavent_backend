@@ -17,7 +17,7 @@ export class UpdateLocationVideoDto extends PartialType(
     example: 'video_text',
     description: 'Caption text of the video file',
   })
-  video_text: string;
+  video_name: string;
 
   @ApiProperty({
     example: 1,

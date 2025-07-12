@@ -20,4 +20,11 @@ export class LocationVideosController {
   async getAllLocationVideos(@Param('id') userId: number): Promise<any> {
     return this.locationVideosService.getAllLocationVideosOfAUser(userId);
   }
+
+  //Get all videos of a location
+  @ApiProperty({ description: 'Get all videos for a location' })
+  @Get('one/:id')
+  async getAllVideosOfALocation(@Param('id') id: number): Promise<any> {
+    return this.locationVideosService.getAllVideosOfALocation(id);
+  }
 }

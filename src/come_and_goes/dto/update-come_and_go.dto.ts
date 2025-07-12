@@ -26,11 +26,17 @@ export class UpdateComeAndGoDto extends PartialType(CreateComeAndGoDto) {
   @ApiProperty({ example: 'Proyekt', description: 'Location longitude' })
   lng: string;
 
+  @ApiProperty({ example: 'Proyekt', description: 'Location name' })
+  locationname: string;
+
   @ApiProperty({ example: 'dogovor', description: 'Dogovor or kp' })
   dogovor_or_kp: string;
 
   @ApiProperty({ example: '24.01.2019', description: 'Date of dagavor' })
-  dogovor_date: Date;
+  dogovorkp_date: Date;
+
+  @ApiProperty({ example: '24.01.2019', description: 'Number of dagavor' })
+  dogovorkp_number: number;
 
   @ApiProperty({ example: 'Man city', description: 'Company name' })
   company_name: string;

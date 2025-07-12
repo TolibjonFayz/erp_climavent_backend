@@ -30,8 +30,15 @@ export class ComeAndGoesService {
   async getAllComeAndGoesOfAUser(userId: number) {
     const allCGO = await this.ComeAndGoRepository.findAll({
       where: { user_id: userId },
+      order: [['createdAt', 'DESC']],
     });
 
+    return allCGO;
+  }
+
+  //Get come and go by id
+  async getComeAndGoById(id: number) {
+    const allCGO = await this.ComeAndGoRepository.findOne({ where: { id } });
     return allCGO;
   }
 

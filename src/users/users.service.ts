@@ -134,8 +134,8 @@ export class UsersService {
   //Token generation
   async getTokens(user: User) {
     const JwtPayload = {
-      id: user.id,
-      is_admin: user.is_admin,
+      user_id: user.dataValues.id,
+      is_admin: user.dataValues.is_admin,
     };
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtservice.signAsync(JwtPayload, {

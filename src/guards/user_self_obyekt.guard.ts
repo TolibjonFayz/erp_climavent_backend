@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ComeAndGo } from 'src/come_and_goes/models/come_and_go.model';
+import { ComeAndGo } from 'src/come_and_gos/models/come_and_go.model';
 
 @Injectable()
 export class UserSelfObyektGuard implements CanActivate {
@@ -36,7 +36,7 @@ export class UserSelfObyektGuard implements CanActivate {
       const user_info = await ComeAndGo.findOne({ where: { id } });
 
       if (user?.user_id != user_info?.dataValues.user_id) {
-        throw new UnauthorizedException('You are not you');
+        throw new UnauthorizedException('You are not you!');
       }
 
       return true;

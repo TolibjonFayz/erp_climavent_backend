@@ -17,6 +17,12 @@ export class UpdateUserDto extends PartialType(LoginUserDto) {
   @ApiProperty({ example: 'john@gmail.com', description: 'Email of the user' })
   email: string;
 
+  @ApiProperty({
+    example: 'profile_image.jpg',
+    description: 'Profile image of the user',
+  })
+  profile_image: string;
+
   @ApiProperty({ example: 'sherlock_me', description: 'Userame of user' })
   username: string;
 

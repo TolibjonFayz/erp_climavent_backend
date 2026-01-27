@@ -20,6 +20,9 @@ export class CreateUserDto {
   })
   email: string;
 
+  @ApiProperty({ example: 'profile.jpg', description: 'Profile image of user' })
+  profile_image: string;
+
   @ApiProperty({ example: 'sherlock_me', description: 'Userame of user' })
   @IsString()
   @IsNotEmpty()

@@ -31,8 +31,10 @@ export class ComeAndGoesController {
   //A user gets his all come and goes
   @ApiProperty({ description: 'Get all come and goes for a user' })
   @Get('user/:id')
-  async getAllComeAndGoes(@Param('id') userId: number): Promise<ComeAndGo[]> {
-    return this.comeAndGoesService.getAllComeAndGoesOfAUser(userId);
+  async getAllComeAndGoes(
+    @Param('id') userId: number,
+  ): Promise<ComeAndGo[]> {
+    return this.comeAndGoesService.getAllComeAndGoByUserId(userId);
   }
 
   //Get come and go by id

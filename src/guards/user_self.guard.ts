@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ComeAndGo } from 'src/come_and_goes/models/come_and_go.model';
+import { ComeAndGo } from 'src/come_and_gos/models/come_and_go.model';
 
 @Injectable()
 export class UserSelfObyektGuard implements CanActivate {

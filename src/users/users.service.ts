@@ -7,6 +7,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Response } from 'express';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
 
 @Injectable()
 export class UsersService {
@@ -128,6 +129,25 @@ export class UsersService {
     return {
       updatedUser,
       message: 'User updated successfully',
+    };
+  }
+
+  //Update user password by user id
+  async updateUserPasswordById(
+    id: number,
+    updateUserPasswordDto: UpdateUserPasswordDto,
+  ) {
+    const hashedPassword = await bcrypt.hash(updateUserPasswordDto.password, 7);
+    const updatedUser = await this.UsersRepository.update(
+      { password: hashedPassword },
+      {
+        where: { id: id },
+        returning: true,
+      },
+    );
+    return {
+      updatedUser,
+      message: 'User password updated successfully',
     };
   }
 

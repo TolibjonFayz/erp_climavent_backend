@@ -10,8 +10,6 @@ export class ComeAndGoesService {
     @InjectModel(ComeAndGo)
     private readonly ComeAndGoRepository: typeof ComeAndGo,
   ) {}
-
-  //Creating come and go service
   async createComeAndGo(
     createComeAndGoDto: CreateComeAndGoDto,
   ): Promise<{ message: string; newCGO: ComeAndGo }> {
@@ -26,23 +24,22 @@ export class ComeAndGoesService {
     }
   }
 
-  //A user gets his all come and goes
-  async getAllComeAndGoesOfAUser(userId: number) {
+  async getAllComeAndGoByUserId(user_id: number) {
     const allCGO = await this.ComeAndGoRepository.findAll({
-      where: { user_id: userId },
-      order: [['createdAt', 'DESC']],
+      where: { user_id: user_id },
+      include: { all: true },
     });
-
     return allCGO;
   }
 
-  //Get come and go by id
   async getComeAndGoById(id: number) {
-    const allCGO = await this.ComeAndGoRepository.findOne({ where: { id } });
+    const allCGO = await this.ComeAndGoRepository.findOne({
+      where: { id },
+      include: { all: true },
+    });
     return allCGO;
   }
 
-  //Updating come and go
   async updateComeAndGo(id: number, updateComeAndGoDto: UpdateComeAndGoDto) {
     const updatedCGO = await this.ComeAndGoRepository.update(
       updateComeAndGoDto,

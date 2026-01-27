@@ -7,7 +7,7 @@ import {
   BelongsTo,
   ForeignKey,
 } from 'sequelize-typescript';
-import { ComeAndGo } from 'src/come_and_goes/models/come_and_go.model';
+import { ComeAndGo } from 'src/come_and_gos/models/come_and_go.model';
 import { User } from 'src/users/models/user.model';
 
 interface LocationVideoAtr {

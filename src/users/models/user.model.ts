@@ -6,6 +6,7 @@ interface UserAtr {
   lastname: string;
   phone_number: string;
   email: string;
+  profile_image: string;
   username: string;
   password: string;
   is_admin: boolean;
@@ -40,6 +41,10 @@ export class User extends Model<User, UserAtr> {
   @ApiProperty({ example: 'sherlock_me', description: 'Userame of user' })
   @Column({ type: DataType.STRING, allowNull: false, unique: true })
   username: string;
+
+  @ApiProperty({ example: 'img.png', description: 'Profile image of user' })
+  @Column({ type: DataType.STRING, allowNull: false })
+  profile_image: string;
 
   @ApiProperty({ example: 'qwerty123', description: 'Password of user' })
   @Column({ type: DataType.STRING, allowNull: false })

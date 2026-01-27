@@ -1,19 +1,11 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-  Res,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Res } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginUserDto } from './dto/login-user.dto';
 import { UsersService } from './users.service';
 import { ApiProperty } from '@nestjs/swagger';
 import { Response } from 'express';
+import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
 
 @Controller('users')
 export class UsersController {
@@ -54,5 +46,15 @@ export class UsersController {
     @Body() updateUserDto: UpdateUserDto,
   ): Promise<any> {
     return this.usersService.updateUserById(id, updateUserDto);
+  }
+
+  //Update user password by id
+  @ApiProperty({ description: 'Update user password by id' })
+  @Patch('update-password/:id')
+  updateUserPasswordById(
+    @Param('id') id: number,
+    @Body() updateUserPasswordDto: UpdateUserPasswordDto,
+  ): Promise<any> {
+    return this.usersService.updateUserPasswordById(id, updateUserPasswordDto);
   }
 }

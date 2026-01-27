@@ -1,7 +1,7 @@
-import { CreateComeAndGoDto } from './create-come_and_go.dto';
+import { CreateComeAndGoInsideDto } from './create-come_and_go_inside.dto';
 import { ApiProperty, PartialType } from '@nestjs/swagger';
 
-export class UpdateComeAndGoDto extends PartialType(CreateComeAndGoDto) {
+export class UpdateComeAndGoDto extends PartialType(CreateComeAndGoInsideDto) {
   @ApiProperty({
     example: '18.05.2025 15:21',
     description: 'When user come from a place (time)',
@@ -36,7 +36,7 @@ export class UpdateComeAndGoDto extends PartialType(CreateComeAndGoDto) {
   dogovorkp_date: Date;
 
   @ApiProperty({ example: '24.01.2019', description: 'Number of dagavor' })
-  dogovorkp_number: number;
+  dogovorkp_number: string;
 
   @ApiProperty({ example: 'Man city', description: 'Company name' })
   company_name: string;
@@ -44,9 +44,15 @@ export class UpdateComeAndGoDto extends PartialType(CreateComeAndGoDto) {
   @ApiProperty({ example: 'Pistonchi', description: 'Client name' })
   client_name: string;
 
+  @ApiProperty({ example: 'Comment', description: 'More info' })
+  more_info: string;
+
   @ApiProperty({
     example: 1,
     description: 'Id of user who created this come and go',
   })
   user_id: number;
+
+  @ApiProperty({ example: 1, description: 'Father come and go id' })
+  come_and_go_father_id: number;
 }

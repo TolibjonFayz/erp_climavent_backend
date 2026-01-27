@@ -8,10 +8,11 @@ import {
   ForeignKey,
   HasMany,
 } from 'sequelize-typescript';
+import { ComeAndGo } from 'src/come_and_gos/models/come_and_go.model';
 import { LocationVideo } from 'src/location_videos/models/location_video.model';
 import { User } from 'src/users/models/user.model';
 
-interface ComeAndGoAtr {
+interface ComeAndGoInsideAtr {
   when_gone: Date;
   when_came: Date;
   whereto: string;
@@ -20,13 +21,18 @@ interface ComeAndGoAtr {
   locationname: string;
   dogovor_or_kp: string;
   dogovorkp_date: Date;
-  dogovorkp_number: number;
+  dogovorkp_number: string;
   company_name: string;
+  more_info: string;
   user_id: number;
+  come_and_go_father_id: number;
 }
 
-@Table({ tableName: 'comeandgo' })
-export class ComeAndGo extends Model<ComeAndGo, ComeAndGoAtr> {
+@Table({ tableName: 'comeandgoinside' })
+export class ComeAndGoInside extends Model<
+  ComeAndGoInside,
+  ComeAndGoInsideAtr
+> {
   @ApiProperty({ example: 1, description: 'Unique id' })
   @Column({ type: DataType.INTEGER, autoIncrement: true, primaryKey: true })
   declare id: number;
@@ -73,8 +79,8 @@ export class ComeAndGo extends Model<ComeAndGo, ComeAndGoAtr> {
   dogovorkp_date: Date;
 
   @ApiProperty({ example: '24.01.2019', description: 'Date of dagavor' })
-  @Column({ type: DataType.INTEGER })
-  dogovorkp_number: number;
+  @Column({ type: DataType.STRING })
+  dogovorkp_number: string;
 
   @ApiProperty({ example: 'Man city', description: 'Company name' })
   @Column({ type: DataType.STRING })
@@ -84,16 +90,17 @@ export class ComeAndGo extends Model<ComeAndGo, ComeAndGoAtr> {
   @Column({ type: DataType.STRING })
   client_name: string;
 
-  @ForeignKey(() => User)
+  @ApiProperty({ example: 'Comment', description: 'More info' })
+  @Column({ type: DataType.TEXT })
+  more_info: string;
+
+  @ForeignKey(() => ComeAndGo)
   @ApiProperty({
     example: 1,
-    description: 'Id of user who created this come and go',
+    description: 'Father come and go id',
   })
   @Column({ type: DataType.INTEGER, allowNull: true })
-  user_id: number;
-  @BelongsTo(() => User)
-  user: User;
-
-  @HasMany(() => LocationVideo)
-  locationVideo: LocationVideo;
+  come_and_go_father_id: number;
+  @BelongsTo(() => ComeAndGo)
+  come_and_go_father: ComeAndGo;
 }

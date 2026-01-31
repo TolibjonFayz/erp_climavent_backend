@@ -69,6 +69,7 @@ export class UsersService {
     if (!user) {
       return res.status(404).json({
         message: 'Foydalanuvchi nomi yoki maxfiy parol xato kiritildi',
+        messageRu: 'Неверно введено имя пользователя или пароль',
         status: res.statusCode,
       });
     }
@@ -79,9 +80,11 @@ export class UsersService {
       user.dataValues.password,
     );
     if (!isPasswordValid) {
-      return res
-        .status(401)
-        .json({ message: "Kiritilgan parol noto'gri", status: res.statusCode });
+      return res.status(401).json({
+        message: "Kiritilgan parol noto'gri",
+        messageRu: 'Неверно введён пароль',
+        status: res.statusCode,
+      });
     }
 
     //Generate new tokens

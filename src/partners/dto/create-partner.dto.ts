@@ -34,6 +34,9 @@ export class CreatePartnerDto {
   @ApiProperty({ example: 'John Doe', description: 'Full name' })
   fullname: string;
 
+  @ApiProperty({ example: 'Smt', description: 'More info about this partner' })
+  more_info: string;
+
   @ApiProperty({ example: 1, description: 'User ID' })
   user_id: number;
 }

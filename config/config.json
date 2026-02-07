@@ -1,0 +1,22 @@
+{
+  "development": {
+    "username": "postgres",
+    "password": "PeFbhkYGTXsmIbeVMhueiMTZriuEKGJe",
+    "database": "railway",
+    "host": "trolley.proxy.rlwy.net",
+    "port": 53770,
+    "dialect": "postgres"
+  },
+  "test": {
+    "username": "postgres",
+    "password": "PeFbhkYGTXsmIbeVMhueiMTZriuEKGJe",
+    "database": "railway_test",
+    "host": "trolley.proxy.rlwy.net",
+    "port": 53770,
+    "dialect": "postgres"
+  },
+  "production": {
+    "use_env_variable": "DATABASE_URL",
+    "dialect": "postgres"
+  }
+}

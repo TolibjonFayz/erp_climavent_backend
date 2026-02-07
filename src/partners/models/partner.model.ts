@@ -20,6 +20,7 @@ interface PartnersAtr {
   phone_number: string;
   additional_phone_number: string;
   fullname: string;
+  more_info: string;
   user_id: number;
 }
 
@@ -67,6 +68,10 @@ export class Partners extends Model<Partners, PartnersAtr> {
   @ApiProperty({ example: 'John Doe', description: 'Full name' })
   @Column({ type: DataType.STRING })
   fullname: string;
+
+  @ApiProperty({ example: 'Smt', description: 'More info about this partner' })
+  @Column({ type: DataType.TEXT })
+  more_info: string;
 
   @ForeignKey(() => User)
   @ApiProperty({ example: 1, description: 'User ID' })

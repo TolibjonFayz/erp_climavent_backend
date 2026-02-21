@@ -3,6 +3,8 @@ import { UpdateComeAndGoDto } from './dto/update-come_and_go_inside.dto';
 import { ComeAndGoInside } from './models/come_and_go_inside.model';
 import { InjectModel } from '@nestjs/sequelize';
 import { Injectable } from '@nestjs/common';
+import { ComeAndGo } from 'src/come_and_gos/models/come_and_go.model';
+import { User } from 'src/users/models/user.model';
 
 @Injectable()
 export class ComeAndGoesService {
@@ -40,7 +42,22 @@ export class ComeAndGoesService {
 
   //Get come and go by id
   async getComeAndGoById(id: number) {
-    const allCGO = await this.ComeAndGoInsideRepository.findOne({ where: { id } });
+    const allCGO = await this.ComeAndGoInsideRepository.findOne({
+      where: { id },
+    });
+    return allCGO;
+  }
+
+  //Get all come and gos
+  async getAllComeAndGos() {
+    const allCGO = await this.ComeAndGoInsideRepository.findAll({
+      include: [
+        {
+          model: ComeAndGo,
+          include: [{ model: User }],
+        },
+      ],
+    });
     return allCGO;
   }
 

@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, Patch, Param, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginUserDto } from './dto/login-user.dto';
@@ -6,6 +15,7 @@ import { UsersService } from './users.service';
 import { ApiProperty } from '@nestjs/swagger';
 import { Response } from 'express';
 import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
+import { AdminGuard } from 'src/guards/admin.guard';
 
 @Controller('users')
 export class UsersController {
@@ -36,6 +46,14 @@ export class UsersController {
   @Get('one/:id')
   getUserById(@Param('id') id: number) {
     return this.usersService.getUserById(id);
+  }
+
+  //Get all users for admin
+  @UseGuards(AdminGuard)
+  @ApiProperty({ description: 'Get all users' })
+  @Get('all')
+  getAllUser() {
+    return this.usersService.getAllUsers();
   }
 
   //Update user by id

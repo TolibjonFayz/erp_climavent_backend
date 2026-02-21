@@ -8,12 +8,12 @@ import {
   Delete,
   UseGuards,
 } from '@nestjs/common';
-import { ComeAndGoesService } from './come_and_goes_inside.service';
-import { UpdateComeAndGoDto } from './dto/update-come_and_go_inside.dto';
-import { ApiProperty, ApiTags } from '@nestjs/swagger';
-import { ComeAndGoInside } from './models/come_and_go_inside.model';
-import { UserSelfObyektGuard } from 'src/guards/user_self_obyekt.guard';
 import { CreateComeAndGoInsideDto } from './dto/create-come_and_go_inside.dto';
+import { UpdateComeAndGoDto } from './dto/update-come_and_go_inside.dto';
+import { ComeAndGoesService } from './come_and_goes_inside.service';
+import { ComeAndGoInside } from './models/come_and_go_inside.model';
+import { ApiProperty, ApiTags } from '@nestjs/swagger';
+import { AdminGuard } from 'src/guards/admin.guard';
 
 @ApiTags('Come and Goes Inside')
 @Controller('come-and-go-inside')
@@ -27,6 +27,14 @@ export class ComeAndGoesController {
     @Body() createComeAndGoInsideDto: CreateComeAndGoInsideDto,
   ): Promise<any> {
     return this.comeAndGoesService.createComeAndGo(createComeAndGoInsideDto);
+  }
+
+  //Get all come and goes
+  @UseGuards(AdminGuard)
+  @ApiProperty({ description: 'Get all come and goes' })
+  @Get('all')
+  async getAllComeAndGoes(): Promise<ComeAndGoInside[]> {
+    return this.comeAndGoesService.getAllComeAndGos();
   }
 
   // //A user gets his all come and goes

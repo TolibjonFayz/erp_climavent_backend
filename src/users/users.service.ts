@@ -123,6 +123,15 @@ export class UsersService {
     return user;
   }
 
+  //Get all users
+  async getAllUsers() {
+    const users = await this.UsersRepository.findAll({
+      order: [['createdAt', 'ASC']],
+      include: { all: true },
+    });
+    return users;
+  }
+
   //Update user by id
   async updateUserById(id: number, updateUserDto: UpdateUserDto) {
     const updatedUser = await this.UsersRepository.update(updateUserDto, {

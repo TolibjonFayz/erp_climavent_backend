@@ -32,7 +32,7 @@ export class AdminGuard implements CanActivate {
       }
 
       if (!user.is_admin) {
-        throw new UnauthorizedException('You are not our admin bro, huh');
+        throw new UnauthorizedException('You are not our admin bro, go away');
       }
       return true;
     }

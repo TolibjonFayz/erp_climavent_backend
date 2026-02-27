@@ -7,6 +7,7 @@ import { ComeAndGoesModule } from './come_and_gos/come_and_goes.module';
 import { LocationVideosModule } from './location_videos/location_videos.module';
 import { ComeAndGoesInsideModule } from './come_and_go_inside/come_and_goes_inside.module';
 import { PartnersModule } from './partners/partners.module';
+import { AuditLogModule } from './audit_log/audit_log.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { PartnersModule } from './partners/partners.module';
     LocationVideosModule,
     ComeAndGoesInsideModule,
     PartnersModule,
+    AuditLogModule,
   ],
   controllers: [],
   providers: [],

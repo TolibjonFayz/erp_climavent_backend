@@ -29,6 +29,7 @@ export class PartnersService {
   findAllPartnersOfAUser(id: number) {
     return this.PartnersRepository.findAll({
       where: { user_id: id },
+      order: [['createdAt', 'DESC']],
       include: { all: true },
     });
   }

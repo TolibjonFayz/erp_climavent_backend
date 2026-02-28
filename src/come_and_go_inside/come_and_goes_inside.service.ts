@@ -1,5 +1,5 @@
 import { CreateComeAndGoInsideDto } from './dto/create-come_and_go_inside.dto';
-import { UpdateComeAndGoDto } from './dto/update-come_and_go_inside.dto';
+import { UpdateComeAndGoInsideDto } from './dto/update-come_and_go_inside.dto';
 import { ComeAndGoInside } from './models/come_and_go_inside.model';
 import { InjectModel } from '@nestjs/sequelize';
 import { Injectable } from '@nestjs/common';
@@ -57,14 +57,18 @@ export class ComeAndGoesService {
           include: [{ model: User }],
         },
       ],
+      order: [['createdAt', 'DESC']],
     });
     return allCGO;
   }
 
   //Updating come and go
-  async updateComeAndGo(id: number, updateComeAndGoDto: UpdateComeAndGoDto) {
+  async updateComeAndGo(
+    id: number,
+    updateComeAndGoInsideDto: UpdateComeAndGoInsideDto,
+  ) {
     const updatedCGO = await this.ComeAndGoInsideRepository.update(
-      updateComeAndGoDto,
+      updateComeAndGoInsideDto,
       { where: { id }, returning: true },
     );
     const response = {

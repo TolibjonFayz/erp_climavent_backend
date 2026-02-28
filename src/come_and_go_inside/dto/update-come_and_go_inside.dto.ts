@@ -1,7 +1,7 @@
 import { CreateComeAndGoInsideDto } from './create-come_and_go_inside.dto';
 import { ApiProperty, PartialType } from '@nestjs/swagger';
 
-export class UpdateComeAndGoDto extends PartialType(CreateComeAndGoInsideDto) {
+export class UpdateComeAndGoInsideDto extends PartialType(CreateComeAndGoInsideDto) {
   @ApiProperty({
     example: '18.05.2025 15:21',
     description: 'When user come from a place (time)',

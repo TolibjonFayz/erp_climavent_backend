@@ -9,7 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CreateComeAndGoInsideDto } from './dto/create-come_and_go_inside.dto';
-import { UpdateComeAndGoDto } from './dto/update-come_and_go_inside.dto';
+import { UpdateComeAndGoInsideDto } from './dto/update-come_and_go_inside.dto';
 import { ComeAndGoesService } from './come_and_goes_inside.service';
 import { ComeAndGoInside } from './models/come_and_go_inside.model';
 import { ApiProperty, ApiTags } from '@nestjs/swagger';
@@ -55,8 +55,9 @@ export class ComeAndGoesController {
   @Patch('update/:id')
   async updateOne(
     @Param('id') id: number,
-    @Body() updateComeAndGoDto: UpdateComeAndGoDto,
+    @Body() updateComeAndGoDto: UpdateComeAndGoInsideDto,
   ) {
     return this.comeAndGoesService.updateComeAndGo(id, updateComeAndGoDto);
   }
 }
+  

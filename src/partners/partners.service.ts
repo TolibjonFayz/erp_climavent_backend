@@ -22,7 +22,10 @@ export class PartnersService {
 
   //Get all partners
   findAllPartners() {
-    return this.PartnersRepository.findAll({ include: { all: true } });
+    return this.PartnersRepository.findAll({
+      include: { all: true },
+      order: [['createdAt', 'DESC']],
+    });
   }
 
   //Get all partners of a user

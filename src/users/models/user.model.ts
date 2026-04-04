@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Table, Model, Column, DataType, HasMany } from 'sequelize-typescript';
+import { Table, Model, Column, DataType } from 'sequelize-typescript';
 
 interface UserAtr {
   firstname: string;
@@ -21,43 +21,43 @@ export class User extends Model<User, UserAtr> {
 
   @ApiProperty({ example: 'John', description: 'Firstname of the user' })
   @Column({ type: DataType.STRING, allowNull: false })
-  firstname: string;
+  declare firstname: string;
 
   @ApiProperty({ example: 'Doe', description: 'Lastname of the user' })
   @Column({ type: DataType.STRING, allowNull: false })
-  lastname: string;
+  declare lastname: string;
 
   @ApiProperty({
     example: '+998908150412',
     description: 'Phone number of the user',
   })
   @Column({ type: DataType.STRING, allowNull: false })
-  phone_number: string;
+  declare phone_number: string;
 
   @ApiProperty({ example: 'john@gmail.com', description: 'Email of the user' })
   @Column({ type: DataType.STRING, allowNull: false })
-  email: string;
+  declare email: string;
 
   @ApiProperty({ example: 'sherlock_me', description: 'Userame of user' })
   @Column({ type: DataType.STRING, allowNull: false, unique: true })
-  username: string;
+  declare username: string;
 
   @ApiProperty({ example: 'img.png', description: 'Profile image of user' })
   @Column({ type: DataType.STRING, allowNull: false })
-  profile_image: string;
+  declare profile_image: string;
 
   @ApiProperty({ example: 'qwerty123', description: 'Password of user' })
   @Column({ type: DataType.STRING, allowNull: false })
-  password: string;
+  declare password: string;
 
   @ApiProperty({ example: 'false', description: 'Is this user - admin' })
   @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: false })
-  is_admin: boolean;
+  declare is_admin: boolean;
 
   @ApiProperty({
     example: 'refreshtoken',
     description: 'Refresh token of user',
   })
   @Column({ type: DataType.STRING, allowNull: true })
-  refresh_token: string;
+  declare refresh_token: string;
 }

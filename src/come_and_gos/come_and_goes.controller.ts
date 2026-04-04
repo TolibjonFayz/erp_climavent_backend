@@ -38,14 +38,14 @@ export class ComeAndGoesController {
   }
 
   //Get come and go by id
-  @UseGuards(UserSelfObyektGuard)
+  // @UseGuards(UserSelfObyektGuard)
   @Get('one/:id')
   async getOneComeAndGoById(@Param('id') id: number) {
     return this.comeAndGoesService.getComeAndGoById(id);
   }
 
   //Updating come and go
-  @UseGuards(UserSelfObyektGuard)
+  // @UseGuards(UserSelfObyektGuard)
   @ApiProperty({ description: 'Update a come and go' })
   @Patch('update/:id')
   async updateOne(

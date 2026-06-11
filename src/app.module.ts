@@ -8,6 +8,7 @@ import { LocationVideosModule } from './location_videos/location_videos.module';
 import { ComeAndGoesInsideModule } from './come_and_go_inside/come_and_goes_inside.module';
 import { PartnersModule } from './partners/partners.module';
 import { AuditLogModule } from './audit_log/audit_log.module';
+import { TasksModule } from './tasks/tasks.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { AuditLogModule } from './audit_log/audit_log.module';
     ComeAndGoesInsideModule,
     PartnersModule,
     AuditLogModule,
+    TasksModule,
   ],
   controllers: [],
   providers: [],

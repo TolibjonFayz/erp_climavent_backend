@@ -10,6 +10,7 @@ import { PartnersModule } from './partners/partners.module';
 import { AuditLogModule } from './audit_log/audit_log.module';
 import { TasksModule } from './tasks/tasks.module';
 import { AttendanceModule } from './attendance/attendance.module';
+import { BossModule } from './boss/boss.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { AttendanceModule } from './attendance/attendance.module';
     AuditLogModule,
     TasksModule,
     AttendanceModule,
+    BossModule,
   ],
   controllers: [],
   providers: [],

@@ -9,6 +9,7 @@ import { ComeAndGoesInsideModule } from './come_and_go_inside/come_and_goes_insi
 import { PartnersModule } from './partners/partners.module';
 import { AuditLogModule } from './audit_log/audit_log.module';
 import { TasksModule } from './tasks/tasks.module';
+import { AttendanceModule } from './attendance/attendance.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { TasksModule } from './tasks/tasks.module';
     PartnersModule,
     AuditLogModule,
     TasksModule,
+    AttendanceModule,
   ],
   controllers: [],
   providers: [],

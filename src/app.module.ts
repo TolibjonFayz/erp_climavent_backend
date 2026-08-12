@@ -11,6 +11,7 @@ import { AuditLogModule } from './audit_log/audit_log.module';
 import { TasksModule } from './tasks/tasks.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { BossModule } from './boss/boss.module';
+import { KpModule } from './kp/kp.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { BossModule } from './boss/boss.module';
     TasksModule,
     AttendanceModule,
     BossModule,
+    KpModule,
   ],
   controllers: [],
   providers: [],

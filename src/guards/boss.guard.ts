@@ -31,14 +31,8 @@ export class BossGuard implements CanActivate {
       throw new UnauthorizedException('Invalid token provided');
     }
 
-    // Bir nechta ruxsat etilgan id (vergul bilan), default: BOSS_USER_ID yoki 16
-    const idsRaw =
-      process.env.BOSS_USER_IDS || String(process.env.BOSS_USER_ID || 16);
-    const allowed = idsRaw
-      .split(',')
-      .map((s) => Number(s.trim()))
-      .filter((n) => !Number.isNaN(n));
-    if (!allowed.includes(Number(payload.user_id))) {
+    const bossId = Number(process.env.BOSS_USER_ID) || 16;
+    if (Number(payload.user_id) !== bossId) {
       throw new UnauthorizedException('Only the boss can access this');
     }
     req.payload = payload;

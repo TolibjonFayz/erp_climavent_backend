@@ -129,12 +129,13 @@ export class KpService {
 
   // Admin — hammasini ko'radi. Oddiy xodim — faqat o'zi kiritganlarini
   // (kiritilgan/import qilingan created_by=NULL yozuvlar faqat adminga ko'rinadi).
+  // Eng katta kp_number tepada; kp_number bo'sh (null) yozuvlar oxirida.
   async findAll(payload: AuthPayload): Promise<Kp[]> {
     const where = payload.is_admin ? {} : { created_by: payload.user_id };
     return this.kpRepository.findAll({
       where,
       include: creatorInclude,
-      order: [['createdAt', 'DESC']],
+      order: [['kp_number', 'DESC NULLS LAST']],
     });
   }
 

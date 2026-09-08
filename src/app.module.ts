@@ -12,6 +12,7 @@ import { TasksModule } from './tasks/tasks.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { BossModule } from './boss/boss.module';
 import { KpModule } from './kp/kp.module';
+import { DogovorModule } from './dogovor/dogovor.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { KpModule } from './kp/kp.module';
     AttendanceModule,
     BossModule,
     KpModule,
+    DogovorModule,
   ],
   controllers: [],
   providers: [],

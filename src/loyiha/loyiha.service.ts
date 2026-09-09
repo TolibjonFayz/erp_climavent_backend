@@ -21,7 +21,6 @@ export interface AuthPayload {
 const userAttrs = ['id', 'firstname', 'lastname', 'username'];
 
 const includeAll = [
-  { model: User, as: 'manager', attributes: userAttrs },
   { model: User, as: 'creator', attributes: userAttrs },
   {
     model: LoyihaFile,
@@ -51,9 +50,13 @@ export class LoyihaService {
     }
   }
 
+  // Tartib raqami avtomatik beriladi (formada so'ralmaydi). Serverda
+  // hisoblanadi — bir vaqtda ikki xodim qo'shsa ham raqam ustma-ust tushmasin.
   async create(dto: CreateLoyihaDto, payload: AuthPayload): Promise<Loyiha> {
+    const orderNumber = dto.order_number ?? (await this.nextOrderNumber()).next;
     const created = await this.loyihaRepository.create({
       ...dto,
+      order_number: orderNumber,
       created_by: payload.user_id,
     } as any);
     return this.findOne(created.id, payload);

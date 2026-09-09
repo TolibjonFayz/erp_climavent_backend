@@ -13,7 +13,7 @@ import { LoyihaFile } from './loyiha-file.model';
 
 interface LoyihaAtr {
   order_number?: number;
-  manager_id?: number;
+  manager_name?: string;
   other_source?: string;
   comment?: string;
   contact_phone?: string;
@@ -37,13 +37,10 @@ export class Loyiha extends Model<Loyiha, LoyihaAtr> {
   @Column({ type: DataType.INTEGER, allowNull: true })
   declare order_number?: number;
 
-  // Loyihani bergan menejer — bizning xodimlarimizdan
-  @ForeignKey(() => User)
-  @ApiProperty({ example: 5, description: 'Manager who brought the project' })
-  @Column({ type: DataType.INTEGER, allowNull: true })
-  declare manager_id?: number;
-  @BelongsTo(() => User, { foreignKey: 'manager_id', as: 'manager' })
-  declare manager?: User;
+  // Loyihani bergan menejer — qo'lda yoziladi (ro'yxatdan tanlanmaydi)
+  @ApiProperty({ example: 'Rasulov Jamshid', description: 'Manager who brought the project' })
+  @Column({ type: DataType.STRING, allowNull: true })
+  declare manager_name?: string;
 
   // Loyihani menejerlarimizdan boshqa odam bergan bo'lsa — shu yerga ismi
   @ApiProperty({ example: 'Akmal aka (tanish arxitektor)', description: 'External source' })

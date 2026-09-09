@@ -18,10 +18,11 @@ export class CreateLoyihaDto {
   @IsOptional()
   order_number?: number;
 
-  @ApiProperty({ example: 5, description: 'Loyihani bergan menejer (bizning xodim)' })
-  @IsInt()
+  @ApiProperty({ example: 'Rasulov Jamshid', description: 'Loyihani bergan menejer' })
+  @IsString()
   @IsOptional()
-  manager_id?: number;
+  @MaxLength(200)
+  manager_name?: string;
 
   @ApiProperty({ example: 'Akmal aka', description: 'Boshqa (tashqi) manba ismi' })
   @IsString()

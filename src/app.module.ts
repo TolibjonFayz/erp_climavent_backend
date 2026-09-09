@@ -13,6 +13,8 @@ import { AttendanceModule } from './attendance/attendance.module';
 import { BossModule } from './boss/boss.module';
 import { KpModule } from './kp/kp.module';
 import { DogovorModule } from './dogovor/dogovor.module';
+import { LoyihaModule } from './loyiha/loyiha.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -45,6 +47,8 @@ import { DogovorModule } from './dogovor/dogovor.module';
     BossModule,
     KpModule,
     DogovorModule,
+    StorageModule,
+    LoyihaModule,
   ],
   controllers: [],
   providers: [],

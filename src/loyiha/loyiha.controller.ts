@@ -33,8 +33,11 @@ interface RequestWithPayload {
   payload: AuthPayload;
 }
 
-// Bitta fayl uchun chegara — katta chizmalar ham sig'sin
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+// Bitta fayl uchun chegara — katta chizmalar (DWG, PDF) sig'sin.
+// DIQQAT: fayl backend RAM'iga to'liq yuklanadi. Juda katta limit + ko'p
+// parallel yuklash Railway'ni OOM qilishi mumkin — kelajakda presigned
+// upload'ga o'tish kerak (fayl to'g'ridan-to'g'ri R2'ga ketadi).
+const MAX_FILE_SIZE = 200 * 1024 * 1024;
 
 @ApiTags('Loyiha')
 @UseGuards(JwtGuard)

@@ -47,7 +47,7 @@ export class DogovorController {
 
   @Post('import')
   @UseInterceptors(
-    FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }),
+    FileInterceptor('file', { limits: { fileSize: 100 * 1024 * 1024 } }),
   )
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Import contracts from an Excel file' })

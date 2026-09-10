@@ -48,7 +48,7 @@ export class KpController {
 
   // Import KP records from an Excel (.xlsx/.xls) file
   @Post('import')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 100 * 1024 * 1024 } }))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Import KP records from an Excel file' })
   @ApiBody({

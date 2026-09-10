@@ -117,6 +117,10 @@ export class LoyihaService {
 
   // ─── Fayllar ────────────────────────────────────────────────────────
 
+  // Har bo'limda FAQAT BITTA fayl bo'ladi:
+  //  - archive: birinchi yuklangan fayl qotib qoladi, ustiga yozib bo'lmaydi
+  //  - working: yangi fayl eskisining o'rnini egallaydi (eskisi R2 dan ham o'chadi)
+  // Ishchi fayl faqat arxiv fayli yuklangandan keyin qo'shiladi.
   async addFile(
     loyihaId: number,
     section: string,
@@ -129,6 +133,27 @@ export class LoyihaService {
       );
     }
     await this.findOne(loyihaId, payload); // huquq tekshiruvi
+
+    const existing = await this.fileRepository.findOne({
+      where: { loyiha_id: loyihaId, section },
+    });
+
+    if (section === 'archive' && existing) {
+      throw new ForbiddenException(
+        "Arxiv fayli allaqachon yuklangan — uni almashtirib bo'lmaydi",
+      );
+    }
+
+    if (section === 'working') {
+      const archive = await this.fileRepository.findOne({
+        where: { loyiha_id: loyihaId, section: 'archive' },
+      });
+      if (!archive) {
+        throw new BadRequestException(
+          "Avval arxiv faylini yuklang, keyin ishchi fayl qo'shiladi",
+        );
+      }
+    }
 
     const key = this.r2.buildKey(
       `loyiha/${loyihaId}/${section}`,
@@ -147,6 +172,13 @@ export class LoyihaService {
       provider: 'r2',
       uploaded_by: payload.user_id,
     } as any);
+
+    // Yangisi muvaffaqiyatli yozilgach eskisini olib tashlaymiz —
+    // yuklash yiqilsa eski fayl joyida qolsin.
+    if (existing) {
+      await this.r2.remove(existing.file_key);
+      await existing.destroy();
+    }
 
     return this.getFile(created.id, payload);
   }

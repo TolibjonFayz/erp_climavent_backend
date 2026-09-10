@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
-  IsEmail,
+  IsDateString,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -9,14 +10,22 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { LOYIHA_STATUSES } from '../models/loyiha.model';
 
 // DIQQAT: global ValidationPipe `whitelist: true` bilan ishlaydi —
 // validator dekoratorisiz maydon tanadan jimgina olib tashlanadi.
 export class CreateLoyihaDto {
-  @ApiProperty({ example: 101, description: 'Tartib raqami' })
+  @ApiProperty({ example: 101, description: 'Loyiha id (odatda avtomatik)' })
   @IsInt()
   @IsOptional()
   order_number?: number;
+
+  @ApiProperty({ example: 'in_progress', description: 'in_progress | done' })
+  @IsIn(LOYIHA_STATUSES as unknown as string[], {
+    message: "Holat faqat 'in_progress' yoki 'done' bo'lishi mumkin",
+  })
+  @IsOptional()
+  status?: string;
 
   @ApiProperty({ example: 'Rasulov Jamshid', description: 'Loyihani bergan menejer' })
   @IsString()
@@ -35,23 +44,18 @@ export class CreateLoyihaDto {
   @IsOptional()
   comment?: string;
 
-  @ApiProperty({ example: '+998 90 123 45 67' })
+  @ApiProperty({ example: '+998 90 123 45 67', description: 'Mijoz raqami' })
   @IsString()
   @IsOptional()
   @MaxLength(60)
   contact_phone?: string;
 
-  @ApiProperty({ example: 'info@example.uz' })
-  @IsEmail({}, { message: "Email formati noto'g'ri" })
-  @IsOptional()
-  contact_email?: string;
-
-  @ApiProperty({ example: 'Toshkent sh., Chilonzor' })
+  @ApiProperty({ example: 'Toshkent sh., Chilonzor', description: 'Mijoz manzili' })
   @IsString()
   @IsOptional()
   contact_address?: string;
 
-  @ApiProperty({ example: 'VRF, kanalli ventilyatsiya' })
+  @ApiProperty({ example: 'VRF', description: "O'rnatiladigan sistema" })
   @IsString()
   @IsOptional()
   system_info?: string;
@@ -61,10 +65,44 @@ export class CreateLoyihaDto {
   @IsOptional()
   area?: number;
 
-  @ApiProperty({ example: 7, description: "Og'irlik darajasi 1-10" })
+  @ApiProperty({ example: 7, description: 'Daraja 1-10' })
   @IsInt()
-  @Min(1, { message: "Baho 1 dan 10 gacha bo'lishi kerak" })
-  @Max(10, { message: "Baho 1 dan 10 gacha bo'lishi kerak" })
+  @Min(1, { message: "Daraja 1 dan 10 gacha bo'lishi kerak" })
+  @Max(10, { message: "Daraja 1 dan 10 gacha bo'lishi kerak" })
   @IsOptional()
   difficulty?: number;
+
+  // ─── KP ───
+  @ApiProperty({ example: '30399', description: 'KP raqami' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  kp_number?: string;
+
+  @ApiProperty({ example: 1189776, description: 'KP summasi' })
+  @IsNumber()
+  @IsOptional()
+  kp_sum?: number;
+
+  @ApiProperty({ example: '2026-07-24', description: 'KP sanasi' })
+  @IsDateString()
+  @IsOptional()
+  kp_date?: string;
+
+  // ─── Dogovor ───
+  @ApiProperty({ example: '30399/7', description: 'Dogovor raqami' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  dogovor_number?: string;
+
+  @ApiProperty({ example: 1189776, description: 'Dogovor summasi' })
+  @IsNumber()
+  @IsOptional()
+  dogovor_sum?: number;
+
+  @ApiProperty({ example: '2026-08-01', description: 'Dogovor sanasi' })
+  @IsDateString()
+  @IsOptional()
+  dogovor_date?: string;
 }

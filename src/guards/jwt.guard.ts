@@ -3,14 +3,20 @@ import {
   ExecutionContext,
   Injectable,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { InjectModel } from '@nestjs/sequelize';
+import { User } from 'src/users/models/user.model';
 
 @Injectable()
 export class JwtGuard implements CanActivate {
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    @InjectModel(User) private readonly userModel: typeof User,
+  ) {}
 
-  canActivate(context: ExecutionContext) {
+  async canActivate(context: ExecutionContext) {
     const req = context.switchToHttp().getRequest();
     const authHeader = req.headers.authorization;
     if (!authHeader) {
@@ -18,16 +24,20 @@ export class JwtGuard implements CanActivate {
     }
     const bearer = authHeader.split(' ')[0];
     const token = authHeader.split(' ')[1];
-    console.log(token);
 
     if (bearer != 'Bearer' || !token) {
       throw new UnauthorizedException('Unauthorized(token not found)');
     }
 
     const payload = this.verifyAccessToken(token);
-    console.log(payload);
-    req.payload = payload;
+    
+    // Check if user is blocked in DB
+    const user = await this.userModel.findByPk(payload.user_id || payload.id);
+    if (user && user.is_blocked) {
+      throw new ForbiddenException('Akkount bloklangan');
+    }
 
+    req.payload = payload;
     return true;
   }
 
@@ -38,14 +48,7 @@ export class JwtGuard implements CanActivate {
         secret: process.env.ACCESS_TOKEN_KEY_USER,
       });
     } catch (error) {
-      console.log(error);
-      try {
-        check = this.jwtService.verify(token, {
-          secret: process.env.ACCESS_TOKEN_KEY_USER,
-        });
-      } catch (secondError) {
-        throw new UnauthorizedException(secondError);
-      }
+      throw new UnauthorizedException('Invalid token');
     }
     return check;
   }

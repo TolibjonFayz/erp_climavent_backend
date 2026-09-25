@@ -1,17 +1,22 @@
 import {
-  BadRequestException,
   CanActivate,
   ExecutionContext,
   Injectable,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { User } from 'src/users/models/user.model';
 import { JwtService } from '@nestjs/jwt';
+import { InjectModel } from '@nestjs/sequelize';
 
 @Injectable()
 export class AdminGuard implements CanActivate {
-  constructor(private readonly jwtService: JwtService) {}
-  canActivate(context: ExecutionContext) {
+  constructor(
+    private readonly jwtService: JwtService,
+    @InjectModel(User) private readonly userModel: typeof User,
+  ) {}
+  
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
     const authHeader = req.headers.authorization;
     if (!authHeader) {
@@ -23,19 +28,32 @@ export class AdminGuard implements CanActivate {
     if (bearer != 'Bearer' || !token) {
       throw new UnauthorizedException('User unauthorized');
     }
-    async function verify(token: string, jwtService: JwtService) {
-      const user: Partial<User> = await jwtService.verify(token, {
+
+    let payload: any;
+    try {
+      payload = this.jwtService.verify(token, {
         secret: process.env.ACCESS_TOKEN_KEY_USER,
       });
-      if (!user) {
-        throw new UnauthorizedException('Invalid token provided');
-      }
-
-      if (!user.is_admin) {
-        throw new UnauthorizedException('You are not our admin bro, go away');
-      }
-      return true;
+    } catch (error) {
+      throw new UnauthorizedException('Invalid token provided');
     }
-    return verify(token, this.jwtService);
+    
+    if (!payload) {
+      throw new UnauthorizedException('Invalid token provided');
+    }
+
+    const user = await this.userModel.findByPk(payload.user_id || payload.id);
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    if (user.is_blocked) {
+      throw new ForbiddenException('Akkount bloklangan');
+    }
+
+    if (!user.is_admin) {
+      throw new UnauthorizedException('You are not our admin bro, go away');
+    }
+    return true;
   }
 }

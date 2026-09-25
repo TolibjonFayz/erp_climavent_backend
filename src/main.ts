@@ -12,12 +12,14 @@ const start = async () => {
     const app = await NestFactory.create(AppModule);
     app.setGlobalPrefix('api');
 
-    app.use(helmet());
+    app.use(helmet({
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+    }));
 
     app.enableCors({
-      origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+      origin: true, // Accepts any origin dynamically (required for credentials: true across different domains)
       methods: 'GET,PUT,PATCH,POST,DELETE,OPTIONS',
-      allowedHeaders: 'Content-Type, Authorization',
+      allowedHeaders: 'Content-Type, Authorization, Accept',
       credentials: true,
       optionsSuccessStatus: 200,
     });

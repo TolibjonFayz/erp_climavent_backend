@@ -5,11 +5,14 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 
+import { NestExpressApplication } from '@nestjs/platform-express';
+
 const start = async () => {
   try {
     const PORT = process.env.PORT || 3333;
 
-    const app = await NestFactory.create(AppModule);
+    const app = await NestFactory.create<NestExpressApplication>(AppModule);
+    app.set('trust proxy', 1);
     app.setGlobalPrefix('api');
 
     app.use(helmet({

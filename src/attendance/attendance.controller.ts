@@ -15,6 +15,7 @@ import { UpdateAttendanceDto } from './dto/update-attendance.dto';
 import { ApiProperty } from '@nestjs/swagger';
 import { AdminGuard } from 'src/guards/admin.guard';
 import { JwtGuard } from 'src/guards/jwt.guard';
+import { UserSelfOrAdminGuard } from 'src/guards/user_self_or_admin.guard';
 
 @Controller('attendance')
 export class AttendanceController {
@@ -37,11 +38,11 @@ export class AttendanceController {
   }
 
   // Bitta xodim oylik davomati — xodim o'zinikini, admin har kimni
-  @UseGuards(JwtGuard)
+  @UseGuards(UserSelfOrAdminGuard)
   @ApiProperty({ description: 'A user attendance for a month' })
-  @Get('user/:userId')
+  @Get('user/:id')
   findByUser(
-    @Param('userId') userId: string,
+    @Param('id') userId: string,
     @Query('month') month?: string,
   ) {
     return this.attendanceService.findByUserAndMonth(+userId, month);

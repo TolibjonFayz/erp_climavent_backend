@@ -1,5 +1,6 @@
 import { ApiProperty, PartialType } from '@nestjs/swagger';
 import { LoginUserDto } from './login-user.dto';
+import { IsOptional, IsBoolean, IsObject } from 'class-validator';
 
 export class UpdateUserDto extends PartialType(LoginUserDto) {
   @ApiProperty({ example: 'John', description: 'Firstname of the user' })
@@ -27,5 +28,21 @@ export class UpdateUserDto extends PartialType(LoginUserDto) {
   username: string;
 
   @ApiProperty({ example: 'qwerty123', description: 'Password of user' })
-  password: string;
+  @IsOptional()
+  password?: string;
+
+  @ApiProperty({ example: true, description: 'Is admin' })
+  @IsOptional()
+  @IsBoolean()
+  is_admin?: boolean;
+
+  @ApiProperty({ example: false, description: 'Is blocked' })
+  @IsOptional()
+  @IsBoolean()
+  is_blocked?: boolean;
+
+  @ApiProperty({ example: {}, description: 'Permissions object' })
+  @IsOptional()
+  @IsObject()
+  permissions?: any;
 }

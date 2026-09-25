@@ -3,6 +3,7 @@ import * as cookieParser from 'cookie-parser';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import helmet from 'helmet';
 
 const start = async () => {
   try {
@@ -11,9 +12,11 @@ const start = async () => {
     const app = await NestFactory.create(AppModule);
     app.setGlobalPrefix('api');
 
+    app.use(helmet());
+
     app.enableCors({
-      origin: '*',
-      methods: 'GET,PUT,PATCH,POST,DELETE',
+      origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+      methods: 'GET,PUT,PATCH,POST,DELETE,OPTIONS',
       allowedHeaders: 'Content-Type, Authorization',
       credentials: true,
       optionsSuccessStatus: 200,

@@ -6,7 +6,9 @@ import {
   Patch,
   Param,
   Res,
+  Req,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -16,6 +18,8 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Response } from 'express';
 import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
 import { AdminGuard } from 'src/guards/admin.guard';
+import { JwtGuard } from 'src/guards/jwt.guard';
+import { UserSelfOrAdminGuard } from 'src/guards/user_self_or_admin.guard';
 
 @Controller('users')
 export class UsersController {
@@ -42,6 +46,7 @@ export class UsersController {
   }
 
   //Get user by id
+  @UseGuards(JwtGuard)
   @ApiProperty({ description: 'Get user by id' })
   @Get('one/:id')
   getUserById(@Param('id') id: number) {
@@ -57,16 +62,25 @@ export class UsersController {
   }
 
   //Update user by id
+  @UseGuards(UserSelfOrAdminGuard)
   @ApiProperty({ description: 'Update user by id' })
   @Patch('update/:id')
   updateUserById(
     @Param('id') id: number,
     @Body() updateUserDto: UpdateUserDto,
+    @Req() req: any,
   ): Promise<any> {
+    const loggedInUserId = req?.user?.user_id;
+    if (loggedInUserId == id) {
+      if (updateUserDto.is_admin !== undefined || updateUserDto.is_blocked !== undefined) {
+        throw new ForbiddenException("O'zingizni admin qilish, adminlikdan olish yoki bloklash mumkin emas!");
+      }
+    }
     return this.usersService.updateUserById(id, updateUserDto);
   }
 
   //Update user password by id
+  @UseGuards(UserSelfOrAdminGuard)
   @ApiProperty({ description: 'Update user password by id' })
   @Patch('update-password/:id')
   updateUserPasswordById(

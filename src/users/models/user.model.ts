@@ -10,7 +10,9 @@ interface UserAtr {
   username: string;
   password: string;
   is_admin: boolean;
+  is_blocked?: boolean;
   refresh_token: string;
+  permissions?: any;
 }
 
 @Table({ tableName: 'users' })
@@ -60,4 +62,12 @@ export class User extends Model<User, UserAtr> {
   })
   @Column({ type: DataType.STRING, allowNull: true })
   declare refresh_token: string;
+
+  @ApiProperty({ example: false, description: 'Is user blocked' })
+  @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: false })
+  declare is_blocked: boolean;
+
+  @ApiProperty({ example: { "loyiha": true }, description: 'Permissions' })
+  @Column({ type: DataType.JSONB, allowNull: true, defaultValue: {} })
+  declare permissions: any;
 }

@@ -48,13 +48,15 @@ export class UsersService {
 
     //Cookie setting
     res.cookie('refresh_token', tokens.refreshToken, {
-      maxAge: 15 * 24 * 60 * 60 * 10000,
+      maxAge: 15 * 24 * 60 * 60 * 1000,
       httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
     });
 
     return {
       message: "Foydalanuvchi muvaffaqiyatli ro'yxatdan o'tdi",
-      user: newUser,
+      user: newUser.dataValues,
       tokens,
       status: res.statusCode,
     };
@@ -70,6 +72,14 @@ export class UsersService {
       return res.status(404).json({
         message: 'Foydalanuvchi nomi yoki maxfiy parol xato kiritildi',
         messageRu: 'Неверно введено имя пользователя или пароль',
+        status: res.statusCode,
+      });
+    }
+    
+    if (user.dataValues.is_blocked) {
+      return res.status(403).json({
+        message: 'Akkount bloklangan',
+        messageRu: 'Аккаунт заблокирован',
         status: res.statusCode,
       });
     }
@@ -97,13 +107,15 @@ export class UsersService {
 
     //Cookie setting
     res.cookie('refresh_token', tokens.refreshToken, {
-      maxAge: 15 * 24 * 60 * 60 * 10000,
+      maxAge: 15 * 24 * 60 * 60 * 1000,
       httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
     });
 
     const response = {
       message: 'Verification code sent to user',
-      user: updateUser[1][0],
+      user: updateUser[1][0].dataValues,
       tokens,
     };
     return response;
@@ -127,6 +139,7 @@ export class UsersService {
   async getAllUsers() {
     const users = await this.UsersRepository.findAll({
       order: [['createdAt', 'ASC']],
+      attributes: { exclude: ['password', 'refresh_token'] },
       include: { all: true },
     });
     return users;
@@ -139,7 +152,7 @@ export class UsersService {
       returning: true,
     });
     return {
-      updatedUser,
+      updatedUser: updatedUser[1][0]?.dataValues || updatedUser[1][0],
       message: 'User updated successfully',
     };
   }
@@ -158,7 +171,7 @@ export class UsersService {
       },
     );
     return {
-      updatedUser,
+      updatedUser: updatedUser[1][0]?.dataValues || updatedUser[1][0],
       message: 'User password updated successfully',
     };
   }

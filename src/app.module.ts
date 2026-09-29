@@ -16,6 +16,7 @@ import { KpModule } from './kp/kp.module';
 import { DogovorModule } from './dogovor/dogovor.module';
 import { LoyihaModule } from './loyiha/loyiha.module';
 import { StorageModule } from './storage/storage.module';
+import { AmocrmModule } from './amocrm/amocrm.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { StorageModule } from './storage/storage.module';
     DogovorModule,
     StorageModule,
     LoyihaModule,
+    AmocrmModule,
   ],
   controllers: [],
   providers: [

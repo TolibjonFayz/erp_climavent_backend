@@ -20,6 +20,8 @@ import {
   AMO_SYNC_INTERVAL_MS,
 } from './amocrm.constants';
 import { AmoCall } from './models/amo-call.model';
+import { AmoContact } from './models/amo-contact.model';
+import { AmoLeadContact } from './models/amo-lead-contact.model';
 import { AmoLead } from './models/amo-lead.model';
 import { AmoLossReason } from './models/amo-loss-reason.model';
 import { AmoPipeline } from './models/amo-pipeline.model';
@@ -64,6 +66,9 @@ export class AmocrmSyncService
     private readonly lossReasonRepo: typeof AmoLossReason,
     @InjectModel(AmoLead) private readonly leadRepo: typeof AmoLead,
     @InjectModel(AmoCall) private readonly callRepo: typeof AmoCall,
+    @InjectModel(AmoContact) private readonly contactRepo: typeof AmoContact,
+    @InjectModel(AmoLeadContact)
+    private readonly leadContactRepo: typeof AmoLeadContact,
     @InjectModel(AmoSyncState) private readonly stateRepo: typeof AmoSyncState,
   ) {}
 
@@ -102,11 +107,18 @@ export class AmocrmSyncService
          WHERE table_name = 'amo_leads' AND column_name = 'loss_reason_id'`,
       );
       const hadLossReason = (cols as unknown[]).length > 0;
+      const [srcCols] = await db.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_name = 'amo_calls' AND column_name = 'source'`,
+      );
+      const hadSource = (srcCols as unknown[]).length > 0;
 
       await db.query(`
         ALTER TABLE amo_leads
           ADD COLUMN IF NOT EXISTS loss_reason_id INTEGER,
           ADD COLUMN IF NOT EXISTS tags JSONB;
+        ALTER TABLE amo_calls
+          ADD COLUMN IF NOT EXISTS source VARCHAR(64);
         ALTER TABLE amo_calls
           ADD COLUMN IF NOT EXISTS phone_key VARCHAR(16)
           GENERATED ALWAYS AS (
@@ -121,6 +133,26 @@ export class AmocrmSyncService
         await this.stateRepo.destroy({ where: { entity: 'leads_full' } });
         this.logger.log(
           "amo_leads'ga yangi ustunlar qo'shildi — to'liq qayta o'tiladi",
+        );
+      }
+      // Eski qo'ng'iroqlarning manbasi (source) to'lishi uchun qayta tortamiz
+      if (!hadSource) {
+        await this.stateRepo.destroy({
+          where: { entity: AMO_NOTE_ENTITIES.map((e) => `calls_${e}`) },
+        });
+        this.logger.log(
+          "amo_calls'ga source qo'shildi — qo'ng'iroqlar qayta tortiladi",
+        );
+      }
+      // Lid ↔ kontakt bog'lanishlari hali yo'q bo'lsa — lidlar to'liq qayta o'tilsin
+      const [[links]] = (await db.query(
+        `SELECT (SELECT COUNT(*) FROM amo_lead_contacts)::int AS links,
+                (SELECT COUNT(*) FROM amo_leads)::int AS leads`,
+      )) as any;
+      if (links.links === 0 && links.leads > 0) {
+        await this.stateRepo.destroy({ where: { entity: 'leads_full' } });
+        this.logger.log(
+          "Lid ↔ kontakt bog'lanishlari to'ldiriladi — to'liq qayta o'tiladi",
         );
       }
     } catch (err) {
@@ -171,6 +203,7 @@ export class AmocrmSyncService
       for (const entity of AMO_NOTE_ENTITIES) {
         await this.step(`calls_${entity}`, () => this.syncCalls(entity));
       }
+      await this.step('contacts', () => this.syncContacts());
       this.logger.log(
         `Sinxronizatsiya tugadi (${Math.round((Date.now() - started) / 1000)}s)`,
       );
@@ -291,7 +324,7 @@ export class AmocrmSyncService
     const { items, maxUpdated } = await this.walk(
       'leads',
       'leads',
-      {},
+      { with: 'contacts' },
       from,
       (rows) => this.saveLeads(rows, new Date()),
     );
@@ -306,7 +339,7 @@ export class AmocrmSyncService
     const { items, maxUpdated } = await this.walk(
       'leads',
       'leads',
-      {},
+      { with: 'contacts' },
       cutoff,
       (rows) => this.saveLeads(rows, new Date()),
     );
@@ -335,6 +368,7 @@ export class AmocrmSyncService
   }
 
   private async saveLeads(leads: any[], syncedAt: Date) {
+    await this.saveLeadContacts(leads);
     await this.leadRepo.bulkCreate(
       leads.map((l) => ({
         id: l.id,
@@ -365,6 +399,91 @@ export class AmocrmSyncService
           'tags',
           'is_deleted',
           'synced_at',
+          'updatedAt',
+        ],
+      },
+    );
+  }
+
+  // Lid ↔ kontakt bog'lanishlari: lidning ro'yxati har safar to'liq almashtiriladi
+  private async saveLeadContacts(leads: any[]) {
+    const ids = leads.map((l) => l.id);
+    const links = leads.flatMap((l) =>
+      (l._embedded?.contacts ?? []).map((c: any) => ({
+        lead_id: l.id,
+        contact_id: c.id,
+      })),
+    );
+    await this.leadContactRepo.destroy({ where: { lead_id: ids } });
+    if (links.length) {
+      await this.leadContactRepo.bulkCreate(links, { ignoreDuplicates: true });
+    }
+  }
+
+  // Kontaktlar: o'zgarganlari (updated_at bo'yicha) + qo'ng'iroqlarda uchragan,
+  // lekin bazada yo'q kontaktlar id bo'yicha so'raladi
+  private async syncContacts(): Promise<StepResult> {
+    const cursor = await this.getCursor('contacts');
+    const from = cursor ? cursor - CURSOR_OVERLAP_SEC : historyCutoff();
+    const { items, maxUpdated } = await this.walk(
+      'contacts',
+      'contacts',
+      {},
+      from,
+      (rows) => this.saveContacts(rows),
+    );
+
+    const db = this.contactRepo.sequelize!;
+    const [missingRows] = await db.query(
+      `SELECT DISTINCT c.entity_id AS id FROM amo_calls c
+       LEFT JOIN amo_contacts ct ON ct.id = c.entity_id
+       WHERE c.entity_type = 'contacts' AND ct.id IS NULL
+       LIMIT 5000`,
+    );
+    const missing = (missingRows as { id: string }[]).map((r) => Number(r.id));
+    let fetched = 0;
+    for (let i = 0; i < missing.length; i += 100) {
+      const chunk = missing.slice(i, i + 100);
+      const params: AmoParams = { limit: AMO_PAGE_LIMIT };
+      chunk.forEach((id, idx) => (params[`filter[id][${idx}]`] = id));
+      const data = await this.client.get('contacts', params);
+      const found: any[] = data?._embedded?.contacts ?? [];
+      await this.saveContacts(found);
+      fetched += found.length;
+      // Topilmaganlari amoCRM'da o'chirilgan — qayta so'ramaslik uchun belgilaymiz
+      const foundIds = new Set(found.map((c) => Number(c.id)));
+      const gone = chunk.filter((id) => !foundIds.has(id));
+      if (gone.length) {
+        await this.contactRepo.bulkCreate(
+          gone.map((id) => ({ id, is_deleted: true })),
+          { ignoreDuplicates: true },
+        );
+      }
+    }
+    return {
+      items: items + fetched,
+      cursor: Math.max(maxUpdated, cursor ?? 0),
+    };
+  }
+
+  private async saveContacts(contacts: any[]) {
+    if (!contacts.length) return;
+    await this.contactRepo.bulkCreate(
+      contacts.map((c) => ({
+        id: c.id,
+        name: c.name ? String(c.name).slice(0, 512) : null,
+        responsible_user_id: c.responsible_user_id ?? null,
+        tags: (c._embedded?.tags ?? []).map((t: any) => String(t.name)),
+        amo_updated_at: toDate(c.updated_at),
+        is_deleted: false,
+      })),
+      {
+        updateOnDuplicate: [
+          'name',
+          'responsible_user_id',
+          'tags',
+          'amo_updated_at',
+          'is_deleted',
           'updatedAt',
         ],
       },
@@ -408,6 +527,7 @@ export class AmocrmSyncService
             : null,
           duration: Number(p.duration) || 0,
           phone: p.phone ? String(p.phone).slice(0, 64) : null,
+          source: p.source ? String(p.source).slice(0, 64) : null,
           responsible_user_id: n.responsible_user_id || n.created_by || null,
           amo_created_at: toDate(n.created_at) as Date,
           amo_updated_at: toDate(n.updated_at) as Date,
@@ -423,6 +543,7 @@ export class AmocrmSyncService
         'call_result',
         'duration',
         'phone',
+        'source',
         'responsible_user_id',
         'amo_created_at',
         'amo_updated_at',

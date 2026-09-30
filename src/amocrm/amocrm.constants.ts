@@ -24,3 +24,16 @@ export const AMO_SYNC_INTERVAL_MS = 10 * 60 * 1000;
 
 // O'chirilgan sdelkalarni aniqlash uchun to'liq o'tish oralig'i
 export const AMO_FULL_RECONCILE_MS = 24 * 60 * 60 * 1000;
+
+// ─── "Mijoz emas" qoidalari ─────────────────────────────
+// Postgres regex (~*). "Bizniki emas" ma'nosidagi yo'qotish sabablari.
+export const AMO_NOT_OURS_RE =
+  '(не\\s*наш|нецелев|не\\s*целев|спам|bizniki\\s*emas|maqsadsiz|not\\s*our)';
+// Kontaktga amoCRM'da shu ma'nodagi teg qo'yilsa — mijoz emas
+export const AMO_NOT_CLIENT_TAG_RE =
+  '(не\\s*клиент|сотрудник|коллег|личн|знаком|xodim|hamkasb|shaxsiy|tanish|mijoz\\s*emas)';
+// Shundan qisqa raqamlar — ichki (ofis ichidagi) qo'ng'iroqlar
+export const AMO_INTERNAL_MAX_DIGITS = 6;
+// "Shubhali raqamlar": oxirgi N kunda kamida M ta qo'ng'iroq
+export const AMO_SUSPICIOUS_DAYS = 90;
+export const AMO_SUSPICIOUS_MIN_CALLS = 20;

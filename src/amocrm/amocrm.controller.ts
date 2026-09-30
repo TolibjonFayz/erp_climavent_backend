@@ -1,14 +1,26 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AdminOrBossGuard } from 'src/guards/admin_or_boss.guard';
 import { AmocrmService } from './amocrm.service';
 import {
   CallsListQueryDto,
+  ExcludePhoneDto,
   LeadsListQueryDto,
   StatsQueryDto,
+  SuspiciousQueryDto,
 } from './dto/stats-query.dto';
 
-// amoCRM statistikasi — faqat admin va boss uchun. Faqat o'qish.
+// amoCRM statistikasi — faqat admin va boss uchun. amoCRM'ga hech narsa yozilmaydi.
 @ApiTags('amoCRM')
 @UseGuards(AdminOrBossGuard)
 @Controller('amocrm')
@@ -30,6 +42,29 @@ export class AmocrmController {
   @Get('leads')
   listLeads(@Query() query: LeadsListQueryDto) {
     return this.amocrmService.listLeads(query);
+  }
+
+  // ─── "Mijoz emas" raqamlar ───
+  // Juda ko'p qo'ng'iroq bo'lgan, hali belgilanmagan raqamlar (hamkasb/tanishga o'xshaganlar)
+  @Get('suspicious')
+  suspicious(@Query() query: SuspiciousQueryDto) {
+    return this.amocrmService.suspicious(query);
+  }
+
+  @Get('excluded-phones')
+  listExcluded() {
+    return this.amocrmService.listExcluded();
+  }
+
+  @Post('excluded-phones')
+  excludePhone(@Body() dto: ExcludePhoneDto, @Req() req: any) {
+    const userId = Number(req.payload?.user_id || req.payload?.id) || null;
+    return this.amocrmService.excludePhone(dto, userId);
+  }
+
+  @Delete('excluded-phones/:key')
+  restorePhone(@Param('key') key: string) {
+    return this.amocrmService.restorePhone(key);
   }
 
   @Get('sync/status')

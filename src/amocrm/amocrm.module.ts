@@ -6,6 +6,9 @@ import { AmocrmController } from './amocrm.controller';
 import { AmocrmService } from './amocrm.service';
 import { AmocrmSyncService } from './amocrm-sync.service';
 import { AmoCall } from './models/amo-call.model';
+import { AmoContact } from './models/amo-contact.model';
+import { AmoExcludedPhone } from './models/amo-excluded-phone.model';
+import { AmoLeadContact } from './models/amo-lead-contact.model';
 import { AmoLead } from './models/amo-lead.model';
 import { AmoLossReason } from './models/amo-loss-reason.model';
 import { AmoPipeline } from './models/amo-pipeline.model';
@@ -22,6 +25,9 @@ import { AmoUser } from './models/amo-user.model';
       AmoLead,
       AmoLossReason,
       AmoCall,
+      AmoContact,
+      AmoLeadContact,
+      AmoExcludedPhone,
       AmoSyncState,
     ]),
     JwtModule.register({}),

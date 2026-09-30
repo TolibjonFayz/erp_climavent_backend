@@ -1,16 +1,28 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { QueryTypes } from 'sequelize';
 import { Sequelize } from 'sequelize-typescript';
 import { AmocrmClient } from './amocrm.client';
 import { AmocrmSyncService } from './amocrm-sync.service';
-import { AMO_STATUS_LOST, AMO_STATUS_WON } from './amocrm.constants';
+import {
+  AMO_INTERNAL_MAX_DIGITS,
+  AMO_NOT_CLIENT_TAG_RE,
+  AMO_NOT_OURS_RE,
+  AMO_STATUS_LOST,
+  AMO_STATUS_WON,
+  AMO_SUSPICIOUS_DAYS,
+  AMO_SUSPICIOUS_MIN_CALLS,
+} from './amocrm.constants';
 import {
   CallKind,
+  CallScope,
   CallsListQueryDto,
+  ExcludePhoneDto,
   LeadsListQueryDto,
   StatsQueryDto,
+  SuspiciousQueryDto,
 } from './dto/stats-query.dto';
+import { AmoExcludedPhone } from './models/amo-excluded-phone.model';
 import { AmoLossReason } from './models/amo-loss-reason.model';
 import { AmoPipeline } from './models/amo-pipeline.model';
 import { AmoStatus } from './models/amo-status.model';
@@ -44,8 +56,16 @@ function parsePeriod(query: StatsQueryDto) {
       ? Number(query.responsible_user_id)
       : null,
     pipelineId: query.pipeline_id ? Number(query.pipeline_id) : null,
+    // Standart — faqat mijozlar bilan bo'lgan qo'ng'iroqlar
+    scope: (query.scope || 'clients') as CallScope,
   };
 }
+
+// Raqamning oxirgi 9 raqami — amo_calls.phone_key bilan bir xil
+const phoneKey = (phone: string) =>
+  String(phone || '')
+    .replace(/[^0-9]/g, '')
+    .slice(-9);
 
 // Qo'ng'iroq guruhlarining SQL sharti (amo_calls ustida)
 const KIND_SQL: Record<CallKind, string> = {
@@ -59,18 +79,69 @@ const KIND_SQL: Record<CallKind, string> = {
   out_no_answer: `AND direction = 'out' AND COALESCE(call_status, 0) <> ${TALKED}`,
 };
 
+// Mijoz bo'lmagan raqamlar va sababi (har raqamga bitta — ustuvorlik bo'yicha):
+//  manual   — admin/boss "Mijoz emas" deb belgilagan
+//  staff    — ERP xodimining telefon raqami
+//  amo_tag  — amoCRM'da kontaktga "Не клиент", "Сотрудник" kabi teg qo'yilgan
+//  not_ours — raqamning barcha lidlari "Не наш клиент" sababi bilan yopilgan
+//  internal — qisqa ichki raqam (dedupCte ichida aniqlanadi)
+const EXCLUDED_CTE = `
+  excl AS (
+    SELECT phone_key, 'manual' AS reason, 1 AS prio FROM amo_excluded_phones
+    UNION ALL
+    SELECT right(regexp_replace(phone_number, '[^0-9]', '', 'g'), 9), 'staff', 2
+    FROM users
+    WHERE length(regexp_replace(COALESCE(phone_number, ''), '[^0-9]', '', 'g')) >= 9
+    UNION ALL
+    SELECT DISTINCT x.phone_key, 'amo_tag', 3
+    FROM amo_calls x
+    JOIN amo_contacts ct ON x.entity_type = 'contacts' AND ct.id = x.entity_id
+    WHERE x.phone_key IS NOT NULL AND ct.tags::text ~* '${AMO_NOT_CLIENT_TAG_RE}'
+    UNION ALL
+    SELECT x.phone_key, 'not_ours', 4
+    FROM amo_calls x
+    JOIN amo_lead_contacts lc ON x.entity_type = 'contacts' AND lc.contact_id = x.entity_id
+    JOIN amo_leads l ON l.id = lc.lead_id AND NOT l.is_deleted
+    LEFT JOIN amo_loss_reasons r ON r.id = l.loss_reason_id
+    WHERE x.phone_key IS NOT NULL
+    GROUP BY x.phone_key
+    HAVING bool_and(
+      l.status_id = ${AMO_STATUS_LOST} AND COALESCE(r.name, '') ~* '${AMO_NOT_OURS_RE}'
+    )
+  ),
+  ex AS (
+    SELECT DISTINCT ON (phone_key) phone_key, reason
+    FROM excl WHERE phone_key IS NOT NULL
+    ORDER BY phone_key, prio
+  )`;
+
 // Bitta qo'ng'iroq bir nechta obyektga (kontakt + sdelka) yozilgan bo'lishi
-// mumkin — uniq bo'yicha bittasini qoldiramiz.
-function dedupCte(where: string) {
+// mumkin — uniq bo'yicha bittasini qoldiramiz. Keyin scope bo'yicha:
+// clients — mijoz emaslar chiqariladi, excluded — faqat ular, all — hammasi.
+function dedupCte(where: string, scope: CallScope) {
+  const scopeSql =
+    scope === 'clients'
+      ? 'WHERE excl_reason IS NULL'
+      : scope === 'excluded'
+        ? 'WHERE excl_reason IS NOT NULL'
+        : '';
   return `
-    WITH c AS (
-      SELECT DISTINCT ON (COALESCE(uniq, entity_type || ':' || id))
-        id, entity_type, entity_id, direction, call_status, duration,
-        phone, phone_key, responsible_user_id, amo_created_at
-      FROM amo_calls
-      WHERE amo_created_at >= :from AND amo_created_at < :to ${where}
-      ORDER BY COALESCE(uniq, entity_type || ':' || id), amo_created_at
-    )`;
+    WITH ${EXCLUDED_CTE},
+    c0 AS (
+      SELECT DISTINCT ON (COALESCE(a.uniq, a.entity_type || ':' || a.id))
+        a.id, a.entity_type, a.entity_id, a.direction, a.call_status, a.duration,
+        a.phone, a.phone_key, a.source, a.responsible_user_id, a.amo_created_at,
+        CASE
+          WHEN a.phone_key IS NOT NULL AND length(a.phone_key) <= ${AMO_INTERNAL_MAX_DIGITS}
+            THEN 'internal'
+          ELSE ex.reason
+        END AS excl_reason
+      FROM amo_calls a
+      LEFT JOIN ex ON ex.phone_key = a.phone_key
+      WHERE a.amo_created_at >= :from AND a.amo_created_at < :to ${where}
+      ORDER BY COALESCE(a.uniq, a.entity_type || ':' || a.id), a.amo_created_at
+    ),
+    c AS (SELECT * FROM c0 ${scopeSql})`;
 }
 
 // O'tkazib yuborilgan qo'ng'iroqdan KEYIN shu raqam bilan aloqa bo'lganmi:
@@ -87,6 +158,14 @@ function callbackLateral(keyExpr: string, atExpr: string) {
       LIMIT 1
     ) cb ON true`;
 }
+
+// Raqamning amoCRM'da biror lidi bormi (kontakt orqali)
+const HAS_LEAD_SQL = (keyExpr: string) => `
+  EXISTS (
+    SELECT 1 FROM amo_calls y
+    JOIN amo_lead_contacts lc ON y.entity_type = 'contacts' AND lc.contact_id = y.entity_id
+    WHERE y.phone_key = ${keyExpr}
+  )`;
 
 export interface UserCallStats {
   user_id: number | null;
@@ -112,6 +191,8 @@ export class AmocrmService {
     @InjectModel(AmoStatus) private readonly statusRepo: typeof AmoStatus,
     @InjectModel(AmoLossReason)
     private readonly lossReasonRepo: typeof AmoLossReason,
+    @InjectModel(AmoExcludedPhone)
+    private readonly excludedRepo: typeof AmoExcludedPhone,
     @InjectModel(AmoSyncState) private readonly stateRepo: typeof AmoSyncState,
   ) {}
 
@@ -122,7 +203,7 @@ export class AmocrmService {
   async getStats(query: StatsQueryDto) {
     const p = parsePeriod(query);
     const [calls, leads, users, sync] = await Promise.all([
-      this.callStats(p.from, p.to, p.userId),
+      this.callStats(p.from, p.to, p.userId, p.scope),
       this.leadStats(p.from, p.to, p.userId, p.pipelineId),
       this.userRepo.findAll({
         attributes: ['id', 'name', 'is_active'],
@@ -133,6 +214,7 @@ export class AmocrmService {
 
     return {
       period: { from: p.fromDay, to: p.toDay },
+      scope: p.scope,
       amo_url: this.amoUrl,
       calls,
       leads,
@@ -143,12 +225,18 @@ export class AmocrmService {
 
   // ─── Qo'ng'iroqlar ──────────────────────────────────────
 
-  private async callStats(from: Date, to: Date, userId: number | null) {
+  private async callStats(
+    from: Date,
+    to: Date,
+    userId: number | null,
+    scope: CallScope,
+  ) {
     const replacements: Record<string, unknown> = { from, to, tz: TZ };
     const userSql = userId ? 'AND responsible_user_id = :userId' : '';
     if (userId) replacements.userId = userId;
+    const opts = { replacements, type: QueryTypes.SELECT as const };
 
-    const [grouped, daily, missed] = await Promise.all([
+    const [grouped, daily, missed, excluded, bySource] = await Promise.all([
       this.sequelize.query<{
         responsible_user_id: number | null;
         call_status: number | null;
@@ -156,11 +244,11 @@ export class AmocrmService {
         count: number;
         duration: number;
       }>(
-        `${dedupCte(userSql)}
+        `${dedupCte(userSql, scope)}
         SELECT responsible_user_id, call_status, direction,
                COUNT(*)::int AS count, COALESCE(SUM(duration), 0)::int AS duration
         FROM c GROUP BY responsible_user_id, call_status, direction`,
-        { replacements, type: QueryTypes.SELECT },
+        opts,
       ),
       this.sequelize.query<{
         day: string;
@@ -168,7 +256,7 @@ export class AmocrmService {
         talked: number;
         in_missed: number;
       }>(
-        `${dedupCte(userSql)}
+        `${dedupCte(userSql, scope)}
         SELECT to_char(amo_created_at AT TIME ZONE :tz, 'YYYY-MM-DD') AS day,
                COUNT(*)::int AS total,
                COUNT(*) FILTER (WHERE call_status = ${TALKED})::int AS talked,
@@ -176,12 +264,12 @@ export class AmocrmService {
                  WHERE direction = 'in' AND COALESCE(call_status, 0) <> ${TALKED}
                )::int AS in_missed
         FROM c GROUP BY day ORDER BY day`,
-        { replacements, type: QueryTypes.SELECT },
+        opts,
       ),
       // O'tkazib yuborilgan kiruvchilar: nechta turli raqam va ulardan
       // nechtasiga keyin umuman aloqa bo'lmagan
       this.sequelize.query<{ numbers: number; not_called_back: number }>(
-        `${dedupCte(`${userSql} ${KIND_SQL.in_missed}`)},
+        `${dedupCte(`${userSql} ${KIND_SQL.in_missed}`, scope)},
         g AS (
           SELECT phone_key, MAX(amo_created_at) AS last_at
           FROM c WHERE phone_key IS NOT NULL GROUP BY phone_key
@@ -189,7 +277,39 @@ export class AmocrmService {
         SELECT COUNT(*)::int AS numbers,
                COUNT(*) FILTER (WHERE cb.callback_at IS NULL)::int AS not_called_back
         FROM g ${callbackLateral('g.phone_key', 'g.last_at')}`,
-        { replacements, type: QueryTypes.SELECT },
+        opts,
+      ),
+      // Mijoz emas deb chiqarib tashlanganlar — sabab bo'yicha
+      this.sequelize.query<{ reason: string; calls: number; numbers: number }>(
+        `${dedupCte(userSql, 'excluded')}
+        SELECT excl_reason AS reason, COUNT(*)::int AS calls,
+               COUNT(DISTINCT phone_key)::int AS numbers
+        FROM c GROUP BY excl_reason ORDER BY calls DESC`,
+        opts,
+      ),
+      // Telefoniya platformalari (Moi Zvonki, Sipuni) bo'yicha
+      this.sequelize.query<{
+        source: string;
+        total: number;
+        clients: number;
+        excluded: number;
+        talked: number;
+        in_missed: number;
+      }>(
+        `${dedupCte(userSql, 'all')}
+        SELECT COALESCE(source, '') AS source,
+               COUNT(*)::int AS total,
+               COUNT(*) FILTER (WHERE excl_reason IS NULL)::int AS clients,
+               COUNT(*) FILTER (WHERE excl_reason IS NOT NULL)::int AS excluded,
+               COUNT(*) FILTER (
+                 WHERE excl_reason IS NULL AND call_status = ${TALKED}
+               )::int AS talked,
+               COUNT(*) FILTER (
+                 WHERE excl_reason IS NULL AND direction = 'in'
+                   AND COALESCE(call_status, 0) <> ${TALKED}
+               )::int AS in_missed
+        FROM c GROUP BY 1 ORDER BY total DESC`,
+        opts,
       ),
     ]);
 
@@ -272,6 +392,12 @@ export class AmocrmService {
       },
       by_user: [...byUser.values()].sort((a, b) => b.total - a.total),
       daily,
+      excluded: {
+        calls: excluded.reduce((a, r) => a + r.calls, 0),
+        numbers: excluded.reduce((a, r) => a + r.numbers, 0),
+        by_reason: excluded,
+      },
+      by_source: bySource,
     };
   }
 
@@ -301,33 +427,55 @@ export class AmocrmService {
         replacements.status = Number(query.status);
       }
     }
+    if (query.source !== undefined) {
+      if (query.source === '') where += ' AND source IS NULL';
+      else {
+        where += ' AND source = :source';
+        replacements.source = query.source;
+      }
+    }
+    if (query.reason) {
+      replacements.reason = query.reason;
+    }
+    const reasonFilter = query.reason ? 'AND c.excl_reason = :reason' : '';
 
     // Qayta aloqa faqat o'tkazib yuborilgan kiruvchilar uchun mazmunli
     const withCallback = kind === 'in_missed';
     const onlyNotCalledBack = withCallback && query.not_called_back === 'true';
-    const cbFilter = onlyNotCalledBack ? 'WHERE cb.callback_at IS NULL' : '';
+    const extraWhere = [
+      reasonFilter,
+      onlyNotCalledBack ? 'AND cb.callback_at IS NULL' : '',
+    ].join(' ');
+    const cbCols = withCallback
+      ? 'cb.callback_at, cb.callback_direction, cb.callback_status'
+      : 'NULL AS callback_at';
 
     if (query.group === 'phone') {
       const rows = await this.sequelize.query<any>(
-        `${dedupCte(where)},
+        `${dedupCte(where, p.scope)},
         g AS (
-          SELECT COALESCE(phone_key, 'id:' || id) AS gkey,
-                 MAX(phone_key) AS phone_key,
-                 (array_agg(phone ORDER BY amo_created_at DESC))[1] AS phone,
+          SELECT COALESCE(c.phone_key, 'id:' || c.id) AS gkey,
+                 MAX(c.phone_key) AS phone_key,
+                 (array_agg(c.phone ORDER BY c.amo_created_at DESC))[1] AS phone,
                  COUNT(*)::int AS calls,
-                 COALESCE(SUM(duration), 0)::int AS duration,
-                 MIN(amo_created_at) AS first_at,
-                 MAX(amo_created_at) AS last_at,
-                 (array_agg(responsible_user_id ORDER BY amo_created_at DESC))[1] AS responsible_user_id,
-                 (array_agg(entity_type ORDER BY amo_created_at DESC))[1] AS entity_type,
-                 (array_agg(entity_id ORDER BY amo_created_at DESC))[1] AS entity_id
-          FROM c GROUP BY 1
+                 COALESCE(SUM(c.duration), 0)::int AS duration,
+                 MIN(c.amo_created_at) AS first_at,
+                 MAX(c.amo_created_at) AS last_at,
+                 (array_agg(c.responsible_user_id ORDER BY c.amo_created_at DESC))[1] AS responsible_user_id,
+                 (array_agg(c.entity_type ORDER BY c.amo_created_at DESC))[1] AS entity_type,
+                 (array_agg(c.entity_id ORDER BY c.amo_created_at DESC))[1] AS entity_id,
+                 (array_agg(ct.name ORDER BY c.amo_created_at DESC)
+                    FILTER (WHERE ct.name IS NOT NULL))[1] AS contact_name,
+                 MAX(c.excl_reason) AS excl_reason
+          FROM c
+          LEFT JOIN amo_contacts ct ON c.entity_type = 'contacts' AND ct.id = c.entity_id
+          GROUP BY 1
         )
-        SELECT g.*, ${withCallback ? 'cb.callback_at, cb.callback_direction, cb.callback_status' : 'NULL AS callback_at'},
+        SELECT g.*, ${cbCols},
                COUNT(*) OVER()::int AS total_count,
                SUM(g.calls) OVER()::int AS total_calls
         FROM g ${withCallback ? callbackLateral('g.phone_key', 'g.last_at') : ''}
-        ${cbFilter}
+        WHERE true ${extraWhere.replace(/c\.excl_reason/g, 'g.excl_reason')}
         ORDER BY g.last_at DESC
         LIMIT :limit OFFSET :offset`,
         { replacements, type: QueryTypes.SELECT },
@@ -336,11 +484,13 @@ export class AmocrmService {
     }
 
     const rows = await this.sequelize.query<any>(
-      `${dedupCte(where)}
-      SELECT c.*, ${withCallback ? 'cb.callback_at, cb.callback_direction, cb.callback_status' : 'NULL AS callback_at'},
+      `${dedupCte(where, p.scope)}
+      SELECT c.*, ct.name AS contact_name, ${cbCols},
              COUNT(*) OVER()::int AS total_count
-      FROM c ${withCallback ? callbackLateral('c.phone_key', 'c.amo_created_at') : ''}
-      ${cbFilter}
+      FROM c
+      LEFT JOIN amo_contacts ct ON c.entity_type = 'contacts' AND ct.id = c.entity_id
+      ${withCallback ? callbackLateral('c.phone_key', 'c.amo_created_at') : ''}
+      WHERE true ${extraWhere}
       ORDER BY c.amo_created_at DESC
       LIMIT :limit OFFSET :offset`,
       { replacements, type: QueryTypes.SELECT },
@@ -356,6 +506,88 @@ export class AmocrmService {
       ...(mode === 'phone' && { total_calls: rows[0]?.total_calls || 0 }),
       items: rows.map(({ total_count, total_calls, ...r }) => r),
     };
+  }
+
+  // ─── "Mijoz emas" raqamlar ──────────────────────────────
+
+  // Hamkasb/tanishga o'xshagan raqamlar: oxirgi N kunda juda ko'p qo'ng'iroq.
+  // Avtomatik chiqarilmaydi — admin ko'rib, "Mijoz emas" deb belgilaydi.
+  async suspicious(query: SuspiciousQueryDto) {
+    const days = query.days || AMO_SUSPICIOUS_DAYS;
+    const minCalls = query.min_calls || AMO_SUSPICIOUS_MIN_CALLS;
+    return this.sequelize.query<any>(
+      `WITH ${EXCLUDED_CTE},
+      n AS (
+        SELECT a.phone_key,
+               (array_agg(a.phone ORDER BY a.amo_created_at DESC))[1] AS phone,
+               COUNT(*)::int AS calls,
+               COUNT(*) FILTER (WHERE a.call_status = ${TALKED})::int AS talked,
+               COALESCE(SUM(a.duration), 0)::int AS duration,
+               MAX(a.amo_created_at) AS last_at,
+               mode() WITHIN GROUP (ORDER BY a.responsible_user_id) AS responsible_user_id,
+               array_remove(array_agg(DISTINCT ct.name), NULL) AS contact_names,
+               (array_agg(a.entity_id ORDER BY a.amo_created_at DESC)
+                  FILTER (WHERE a.entity_type = 'contacts'))[1] AS contact_id
+        FROM amo_calls a
+        LEFT JOIN ex ON ex.phone_key = a.phone_key
+        LEFT JOIN amo_contacts ct ON a.entity_type = 'contacts' AND ct.id = a.entity_id
+        WHERE a.amo_created_at >= now() - (:days || ' days')::interval
+          AND a.phone_key IS NOT NULL
+          AND length(a.phone_key) > ${AMO_INTERNAL_MAX_DIGITS}
+          AND ex.phone_key IS NULL
+        GROUP BY a.phone_key
+        HAVING COUNT(*) >= :minCalls
+      )
+      SELECT n.*, ${HAS_LEAD_SQL('n.phone_key')} AS has_lead
+      FROM n
+      ORDER BY has_lead ASC, n.calls DESC
+      LIMIT 200`,
+      {
+        replacements: { days: String(days), minCalls },
+        type: QueryTypes.SELECT,
+      },
+    );
+  }
+
+  async listExcluded() {
+    return this.sequelize.query<any>(
+      `SELECT e.phone_key, e.phone, e.reason, e.note, e."createdAt" AS created_at,
+              TRIM(CONCAT(u.firstname, ' ', u.lastname)) AS created_by_name,
+              (SELECT COUNT(*) FROM amo_calls x WHERE x.phone_key = e.phone_key)::int AS calls,
+              (SELECT ct.name FROM amo_calls x
+                 JOIN amo_contacts ct ON x.entity_type = 'contacts' AND ct.id = x.entity_id
+               WHERE x.phone_key = e.phone_key AND ct.name IS NOT NULL
+               ORDER BY x.amo_created_at DESC LIMIT 1) AS contact_name
+       FROM amo_excluded_phones e
+       LEFT JOIN users u ON u.id = e.created_by
+       ORDER BY e."createdAt" DESC`,
+      { type: QueryTypes.SELECT },
+    );
+  }
+
+  async excludePhone(dto: ExcludePhoneDto, userId: number | null) {
+    const digits = String(dto.phone).replace(/[^0-9]/g, '');
+    if (digits.length <= AMO_INTERNAL_MAX_DIGITS) {
+      throw new BadRequestException(
+        'Raqam juda qisqa. Qisqa ichki raqamlar avtomatik chiqariladi.',
+      );
+    }
+    const key = phoneKey(digits);
+    await this.excludedRepo.upsert({
+      phone_key: key,
+      phone: String(dto.phone).trim().slice(0, 64),
+      reason: dto.reason,
+      note: dto.note?.trim() || null,
+      created_by: userId,
+    });
+    return { phone_key: key };
+  }
+
+  async restorePhone(key: string) {
+    const deleted = await this.excludedRepo.destroy({
+      where: { phone_key: phoneKey(key) },
+    });
+    return { deleted };
   }
 
   // ─── Sdelkalar (voronkalar bo'yicha) ────────────────────
@@ -460,16 +692,22 @@ export class AmocrmService {
           { count: 0, sum: 0 },
         );
 
+    const notOursRe = new RegExp(AMO_NOT_OURS_RE, 'i');
     const reasonNames = new Map(reasons.map((r) => [r.id, r.name]));
     const loss_reasons = lossRows
-      .map((r) => ({
-        id: r.loss_reason_id || 0,
-        name: r.loss_reason_id
+      .map((r) => {
+        const name = r.loss_reason_id
           ? reasonNames.get(r.loss_reason_id) || null
-          : null,
-        count: r.count,
-        sum: Number(r.sum),
-      }))
+          : null;
+        return {
+          id: r.loss_reason_id || 0,
+          name,
+          // "Bizniki emas" ma'nosidagi sabab
+          is_not_ours: Boolean(name && notOursRe.test(name)),
+          count: r.count,
+          sum: Number(r.sum),
+        };
+      })
       .sort((a, b) => b.count - a.count);
 
     return {

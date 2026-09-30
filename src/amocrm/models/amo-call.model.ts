@@ -6,6 +6,7 @@ interface AmoCallAtr {
   entity_id: number;
   direction: string;
   uniq?: string | null;
+  source?: string | null;
   call_status?: number | null;
   call_result?: string | null;
   duration?: number;
@@ -46,6 +47,11 @@ export class AmoCall extends Model<AmoCall, AmoCallAtr> {
   // sdelkaga yozilishi mumkin — statistikada shu bo'yicha takrorlar olib tashlanadi.
   @Column({ type: DataType.STRING(255), allowNull: true })
   declare uniq?: string | null;
+
+  // Qaysi telefoniyadan kelgan (params.source): Moi Zvonki, Sipuni va h.k.
+  // Eski bazalarda ustun AmocrmSyncService.ensureSchema() orqali qo'shiladi.
+  @Column({ type: DataType.STRING(64), allowNull: true })
+  declare source?: string | null;
 
   // 1..7 — AMO_CALL_STATUSES ga qarang
   @Column({ type: DataType.INTEGER, allowNull: true })

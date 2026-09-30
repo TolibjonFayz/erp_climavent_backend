@@ -1,8 +1,23 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
+import { EXCLUDE_REASONS } from '../models/amo-excluded-phone.model';
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+// clients — faqat mijozlar (standart), all — hammasi, excluded — faqat mijoz emaslar
+export const CALL_SCOPES = ['clients', 'all', 'excluded'] as const;
+export type CallScope = (typeof CALL_SCOPES)[number];
 
 export class StatsQueryDto {
   @ApiPropertyOptional({
@@ -34,6 +49,11 @@ export class StatsQueryDto {
   @IsInt()
   @Min(1)
   pipeline_id?: number;
+
+  @ApiPropertyOptional({ enum: CALL_SCOPES, default: 'clients' })
+  @IsOptional()
+  @IsIn(CALL_SCOPES as unknown as string[])
+  scope?: CallScope;
 }
 
 class PagedQueryDto extends StatsQueryDto {
@@ -95,6 +115,59 @@ export class CallsListQueryDto extends PagedQueryDto {
   @IsOptional()
   @IsIn(['true', 'false'])
   not_called_back?: string;
+
+  @ApiPropertyOptional({
+    description: "Telefoniya manbasi; bo'sh satr — noma'lum",
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  source?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Chiqarish sababi: manual | staff | amo_tag | not_ours | internal',
+  })
+  @IsOptional()
+  @IsIn(['manual', 'staff', 'amo_tag', 'not_ours', 'internal'])
+  reason?: string;
+}
+
+export class SuspiciousQueryDto {
+  @ApiPropertyOptional({ default: 90 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(7)
+  @Max(365)
+  days?: number;
+
+  @ApiPropertyOptional({ default: 20 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(3)
+  @Max(1000)
+  min_calls?: number;
+}
+
+export class ExcludePhoneDto {
+  @ApiPropertyOptional({ example: '+998 90 123 45 67' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  @Matches(/\d/, { message: 'Telefon raqami kiritilishi kerak' })
+  phone: string;
+
+  @ApiPropertyOptional({ enum: EXCLUDE_REASONS })
+  @IsIn(EXCLUDE_REASONS as unknown as string[])
+  reason: string;
+
+  @ApiPropertyOptional({ example: 'Omborchi Akmal' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  note?: string;
 }
 
 export class LeadsListQueryDto extends PagedQueryDto {

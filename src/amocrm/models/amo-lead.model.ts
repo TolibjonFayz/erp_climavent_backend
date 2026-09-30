@@ -10,6 +10,8 @@ interface AmoLeadAtr {
   amo_created_at: Date;
   amo_updated_at: Date;
   amo_closed_at?: Date | null;
+  loss_reason_id?: number | null;
+  tags?: string[];
   is_deleted?: boolean;
   synced_at: Date;
 }
@@ -52,6 +54,15 @@ export class AmoLead extends Model<AmoLead, AmoLeadAtr> {
 
   @Column({ type: DataType.DATE, allowNull: true })
   declare amo_closed_at?: Date | null;
+
+  // Yo'qotish sababi (amo_loss_reasons). Faqat 143 bosqichida to'ldiriladi.
+  // Eski bazalarda ustun AmocrmSyncService.ensureSchema() orqali qo'shiladi.
+  @Column({ type: DataType.INTEGER, allowNull: true })
+  declare loss_reason_id?: number | null;
+
+  // Teg nomlari
+  @Column({ type: DataType.JSONB, allowNull: true })
+  declare tags?: string[];
 
   // amoCRM'da o'chirilgan (tungi solishtirishda aniqlanadi). Jismonan o'chirmaymiz.
   @Column({ type: DataType.BOOLEAN, defaultValue: false })

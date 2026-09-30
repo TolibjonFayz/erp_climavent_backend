@@ -21,6 +21,7 @@ import {
 } from './amocrm.constants';
 import { AmoCall } from './models/amo-call.model';
 import { AmoLead } from './models/amo-lead.model';
+import { AmoLossReason } from './models/amo-loss-reason.model';
 import { AmoPipeline } from './models/amo-pipeline.model';
 import { AmoStatus } from './models/amo-status.model';
 import { AmoSyncState } from './models/amo-sync-state.model';
@@ -59,6 +60,8 @@ export class AmocrmSyncService
     @InjectModel(AmoUser) private readonly userRepo: typeof AmoUser,
     @InjectModel(AmoPipeline) private readonly pipelineRepo: typeof AmoPipeline,
     @InjectModel(AmoStatus) private readonly statusRepo: typeof AmoStatus,
+    @InjectModel(AmoLossReason)
+    private readonly lossReasonRepo: typeof AmoLossReason,
     @InjectModel(AmoLead) private readonly leadRepo: typeof AmoLead,
     @InjectModel(AmoCall) private readonly callRepo: typeof AmoCall,
     @InjectModel(AmoSyncState) private readonly stateRepo: typeof AmoSyncState,
@@ -68,7 +71,8 @@ export class AmocrmSyncService
     return this.running;
   }
 
-  onApplicationBootstrap() {
+  async onApplicationBootstrap() {
+    await this.ensureSchema();
     if (process.env.AMO_SYNC_ENABLED === 'false') {
       this.logger.log(
         "AMO_SYNC_ENABLED=false — avtomatik sinxronizatsiya o'chirilgan",
@@ -86,6 +90,42 @@ export class AmocrmSyncService
       () => this.runScheduled(),
       AMO_SYNC_INTERVAL_MS,
     );
+  }
+
+  // sequelize sync mavjud jadvalga yangi ustun qo'shmaydi — shuning uchun
+  // keyin qo'shilgan ustunlar shu yerda (idempotent) qo'shiladi.
+  private async ensureSchema() {
+    const db = this.leadRepo.sequelize!;
+    try {
+      const [cols] = await db.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_name = 'amo_leads' AND column_name = 'loss_reason_id'`,
+      );
+      const hadLossReason = (cols as unknown[]).length > 0;
+
+      await db.query(`
+        ALTER TABLE amo_leads
+          ADD COLUMN IF NOT EXISTS loss_reason_id INTEGER,
+          ADD COLUMN IF NOT EXISTS tags JSONB;
+        ALTER TABLE amo_calls
+          ADD COLUMN IF NOT EXISTS phone_key VARCHAR(16)
+          GENERATED ALWAYS AS (
+            NULLIF(right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 9), '')
+          ) STORED;
+        CREATE INDEX IF NOT EXISTS amo_calls_phone_key_idx
+          ON amo_calls (phone_key, amo_created_at);
+      `);
+
+      // Yangi ustunlar to'lishi uchun keyingi sinxronizatsiya to'liq o'tsin
+      if (!hadLossReason) {
+        await this.stateRepo.destroy({ where: { entity: 'leads_full' } });
+        this.logger.log(
+          "amo_leads'ga yangi ustunlar qo'shildi — to'liq qayta o'tiladi",
+        );
+      }
+    } catch (err) {
+      this.logger.error(`ensureSchema: ${(err as Error).message}`);
+    }
   }
 
   onModuleDestroy() {
@@ -122,6 +162,7 @@ export class AmocrmSyncService
     try {
       await this.step('users', () => this.syncUsers());
       await this.step('pipelines', () => this.syncPipelines());
+      await this.step('loss_reasons', () => this.syncLossReasons());
       if (forceFull || (await this.isFullReconcileDue())) {
         await this.step('leads_full', () => this.fullLeadsPass());
       } else {
@@ -232,6 +273,18 @@ export class AmocrmSyncService
     return { items: pipelines.length };
   }
 
+  private async syncLossReasons(): Promise<StepResult> {
+    const data = await this.client.get('leads/loss_reasons');
+    const reasons = data?._embedded?.loss_reasons ?? [];
+    if (reasons.length) {
+      await this.lossReasonRepo.bulkCreate(
+        reasons.map((r: any) => ({ id: r.id, name: r.name, sort: r.sort })),
+        { updateOnDuplicate: ['name', 'sort', 'updatedAt'] },
+      );
+    }
+    return { items: reasons.length };
+  }
+
   private async incrementalLeads(): Promise<StepResult> {
     const cursor = await this.getCursor('leads');
     const from = cursor ? cursor - CURSOR_OVERLAP_SEC : historyCutoff();
@@ -293,6 +346,8 @@ export class AmocrmSyncService
         amo_created_at: toDate(l.created_at) as Date,
         amo_updated_at: toDate(l.updated_at) as Date,
         amo_closed_at: toDate(l.closed_at),
+        loss_reason_id: l.loss_reason_id || null,
+        tags: (l._embedded?.tags ?? []).map((t: any) => String(t.name)),
         is_deleted: false,
         synced_at: syncedAt,
       })),
@@ -306,6 +361,8 @@ export class AmocrmSyncService
           'amo_created_at',
           'amo_updated_at',
           'amo_closed_at',
+          'loss_reason_id',
+          'tags',
           'is_deleted',
           'synced_at',
           'updatedAt',

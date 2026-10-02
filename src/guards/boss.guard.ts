@@ -1,15 +1,23 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { InjectModel } from '@nestjs/sequelize';
+import { User } from 'src/users/models/user.model';
+import { hasBossAccess } from './boss-access';
 
-// Faqat boss (direktor) kira oladi. Boss user_id .env'dan (default 16).
+// Boss sahifasi API'si: direktor yoki admin "boss" ruxsatini bergan xodim.
+// Ruxsat yo'q bo'lsa 403 (401 emas) — frontend 401'da sessiyani tugatadi.
 @Injectable()
 export class BossGuard implements CanActivate {
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    @InjectModel(User) private readonly userModel: typeof User,
+  ) {}
 
   async canActivate(context: ExecutionContext) {
     const req = context.switchToHttp().getRequest();
@@ -31,9 +39,17 @@ export class BossGuard implements CanActivate {
       throw new UnauthorizedException('Invalid token provided');
     }
 
-    const bossId = Number(process.env.BOSS_USER_ID) || 16;
-    if (Number(payload.user_id) !== bossId) {
-      throw new UnauthorizedException('Only the boss can access this');
+    const user = await this.userModel.findByPk(
+      Number(payload?.user_id || payload?.id),
+    );
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+    if (user.is_blocked) {
+      throw new ForbiddenException('Akkount bloklangan');
+    }
+    if (!hasBossAccess(user)) {
+      throw new ForbiddenException("Boss sahifasiga ruxsat yo'q");
     }
     req.payload = payload;
     return true;

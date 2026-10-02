@@ -17,7 +17,7 @@ import {
 } from './dto/boss.dto';
 import { BossGuard } from 'src/guards/boss.guard';
 
-// Hammasi faqat boss (id 16) uchun
+// Direktor yoki admin "boss" ruxsatini bergan xodimlar uchun (BossGuard)
 @UseGuards(BossGuard)
 @Controller('boss')
 export class BossController {

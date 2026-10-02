@@ -8,8 +8,9 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/sequelize';
 import { User } from 'src/users/models/user.model';
+import { hasBossAccess } from './boss-access';
 
-// Admin (is_admin) YOKI boss (BOSS_USER_ID, default 16) kira oladi.
+// Admin (is_admin) YOKI boss sahifasiga ruxsati borlar (hasBossAccess) kira oladi.
 @Injectable()
 export class AdminOrBossGuard implements CanActivate {
   constructor(
@@ -46,8 +47,7 @@ export class AdminOrBossGuard implements CanActivate {
       throw new ForbiddenException('Akkount bloklangan');
     }
 
-    const bossId = Number(process.env.BOSS_USER_ID) || 16;
-    if (!user.is_admin && userId !== bossId) {
+    if (!user.is_admin && !hasBossAccess(user)) {
       throw new ForbiddenException('Faqat admin yoki boss uchun');
     }
     req.payload = payload;

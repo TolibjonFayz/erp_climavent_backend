@@ -12,6 +12,7 @@ import {
 import { AttendanceService } from './attendance.service';
 import { CreateAttendanceDto } from './dto/create-attendance.dto';
 import { UpdateAttendanceDto } from './dto/update-attendance.dto';
+import { BulkAttendanceDto } from './dto/bulk-attendance.dto';
 import { ApiProperty } from '@nestjs/swagger';
 import { AdminGuard } from 'src/guards/admin.guard';
 import { JwtGuard } from 'src/guards/jwt.guard';
@@ -27,6 +28,14 @@ export class AttendanceController {
   @Post('create')
   create(@Body() dto: CreateAttendanceDto) {
     return this.attendanceService.upsert(dto);
+  }
+
+  // Ommaviy tasdiqlash (bor kunlar o'zgarmaydi) — faqat admin
+  @UseGuards(AdminGuard)
+  @ApiProperty({ description: 'Create many attendance days, existing ones are kept — admin only' })
+  @Post('bulk')
+  bulk(@Body() dto: BulkAttendanceDto) {
+    return this.attendanceService.bulkCreate(dto);
   }
 
   // Barcha xodimlar oylik davomati — faqat admin

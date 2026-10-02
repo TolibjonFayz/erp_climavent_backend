@@ -5,6 +5,7 @@ import { Attendance } from './models/attendance.model';
 import { User } from 'src/users/models/user.model';
 import { CreateAttendanceDto } from './dto/create-attendance.dto';
 import { UpdateAttendanceDto } from './dto/update-attendance.dto';
+import { BulkAttendanceDto } from './dto/bulk-attendance.dto';
 
 const userInclude = [
   {
@@ -48,6 +49,23 @@ export class AttendanceService {
     const created = await this.AttendanceRepository.create(dto);
     return this.AttendanceRepository.findByPk(created.id, {
       include: userInclude,
+    });
+  }
+
+  // Ommaviy tasdiqlash: faqat hali yozuvi yo'q (user_id, date) kunlar yaratiladi — tasdiqlanganlarga tegilmaydi
+  async bulkCreate(dto: BulkAttendanceDto) {
+    return this.AttendanceRepository.sequelize!.transaction(async (transaction) => {
+      const userIds = [...new Set(dto.records.map((r) => r.user_id))];
+      const dates = [...new Set(dto.records.map((r) => r.date))];
+      const existing = await this.AttendanceRepository.findAll({
+        where: { user_id: userIds, date: dates },
+        attributes: ['user_id', 'date'],
+        transaction,
+      });
+      const taken = new Set(existing.map((r) => `${r.user_id}|${r.date}`));
+      const fresh = dto.records.filter((r) => !taken.has(`${r.user_id}|${r.date}`));
+      if (fresh.length) await this.AttendanceRepository.bulkCreate(fresh, { transaction });
+      return { created: fresh.length, skipped: dto.records.length - fresh.length };
     });
   }
 

@@ -38,6 +38,8 @@ const DAILY_SQL = `
    GROUP BY e.employee_no, he.name, he.user_id, 4
    ORDER BY 4, check_in NULLS LAST`;
 
+const OFFICE_OPEN_MIN = 4;
+
 function monthRange(month: string) {
   if (!/^\d{4}-\d{2}$/.test(month)) throw new BadRequestException('month YYYY-MM formatida bo‘lishi kerak');
   const [y, m] = month.split('-').map(Number);
@@ -107,16 +109,19 @@ export class HikService {
     });
   }
 
-  // Ofisda kamida bitta qayd bo'lgan kunlar — qolgan ish kunlari bayram/dam olish deb taklif qilinadi
+  // Ofis ochiq bo'lgan kunlar: kamida OFFICE_OPEN_MIN xodim qayd etilgan. Qolgan ish kunlari bayram/dam olish
+  // deb taklif qilinadi (tarixda bayramlarda 0-2 kishi, oddiy ish kunlarida 7+ kishi kelgan).
   async officeDays(month: string): Promise<string[]> {
     const { start, next } = monthRange(month);
     const rows = await this.sequelize.query<{ date: string }>(
-      `SELECT DISTINCT to_char(event_time AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS date
+      `SELECT to_char(event_time AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS date
          FROM attendance_events
         WHERE event_time >= (CAST(:start AS timestamp) AT TIME ZONE 'Asia/Tashkent')
           AND event_time <  (CAST(:next AS timestamp) AT TIME ZONE 'Asia/Tashkent')
+        GROUP BY 1
+       HAVING COUNT(DISTINCT employee_no) >= :minPeople
         ORDER BY 1`,
-      { replacements: { start, next }, type: QueryTypes.SELECT },
+      { replacements: { start, next, minPeople: OFFICE_OPEN_MIN }, type: QueryTypes.SELECT },
     );
     return rows.map((r) => r.date);
   }

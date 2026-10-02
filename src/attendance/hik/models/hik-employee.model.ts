@@ -5,7 +5,7 @@ import { User } from 'src/users/models/user.model';
 // Terminaldagi xodim raqami -> ERP xodimi bog'lanishi.
 // Ism va raqamni agent yangilaydi, user_id ni admin ERP'da tanlaydi.
 
-interface HikEmployeeAtr {
+export interface HikEmployeeAtr {
   employee_no: string;
   name: string;
   user_id?: number | null;

@@ -93,11 +93,16 @@ export class HikService {
     return { received: dto.events.length, accepted: rows.length };
   }
 
-  daily(month: string, userId?: number): Promise<HikDailyRow[]> {
+  // filter: ERP xodimi (userId) yoki ERP'da akkaunti yo'q terminal xodimi (employeeNo)
+  daily(month: string, filter: { userId?: number; employeeNo?: string } = {}): Promise<HikDailyRow[]> {
     const { start, next } = monthRange(month);
-    const sql = DAILY_SQL.replace('%USER_FILTER%', userId ? 'AND he.user_id = :userId' : '');
-    return this.sequelize.query<HikDailyRow>(sql, {
-      replacements: { start, next, userId },
+    const where = filter.userId
+      ? 'AND he.user_id = :userId'
+      : filter.employeeNo
+        ? 'AND e.employee_no = :employeeNo'
+        : '';
+    return this.sequelize.query<HikDailyRow>(DAILY_SQL.replace('%USER_FILTER%', where), {
+      replacements: { start, next, userId: filter.userId ?? null, employeeNo: filter.employeeNo ?? null },
       type: QueryTypes.SELECT,
     });
   }
@@ -116,11 +121,22 @@ export class HikService {
     return rows.map((r) => r.date);
   }
 
-  employees() {
-    return this.employeeRepo.findAll({
-      include: [{ model: User, as: 'user', attributes: ['id', 'firstname', 'lastname', 'username'] }],
-      order: [['employee_no', 'ASC']],
-    });
+  // first_seen — xodimning birinchi kamera qaydi (ishga kelgan kunini taxminlash uchun)
+  async employees() {
+    const [list, seen] = await Promise.all([
+      this.employeeRepo.findAll({
+        include: [{ model: User, as: 'user', attributes: ['id', 'firstname', 'lastname', 'username'] }],
+        order: [['employee_no', 'ASC']],
+      }),
+      this.sequelize.query<{ employee_no: string; first_seen: string }>(
+        `SELECT employee_no, to_char(MIN(event_time) AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS first_seen
+           FROM attendance_events
+          GROUP BY employee_no`,
+        { type: QueryTypes.SELECT },
+      ),
+    ]);
+    const firstSeen = new Map(seen.map((r) => [r.employee_no, r.first_seen]));
+    return list.map((e) => ({ ...e.toJSON(), first_seen: firstSeen.get(e.employee_no) ?? null }));
   }
 
   async link(employeeNo: string, userId: number | null) {

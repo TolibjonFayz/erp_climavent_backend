@@ -44,7 +44,14 @@ export class HikController {
   @ApiProperty({ description: 'Daily first-in / last-out of one user' })
   @Get('daily/user/:id')
   dailyByUser(@Param('id') id: string, @Query('month') month: string) {
-    return this.hikService.daily(month, +id);
+    return this.hikService.daily(month, { userId: +id });
+  }
+
+  @UseGuards(AdminGuard)
+  @ApiProperty({ description: 'Daily first-in / last-out of a terminal employee (also without ERP account) — admin only' })
+  @Get('daily/employee/:employeeNo')
+  dailyByEmployee(@Param('employeeNo') employeeNo: string, @Query('month') month: string) {
+    return this.hikService.daily(month, { employeeNo });
   }
 
   @UseGuards(JwtGuard)

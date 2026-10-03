@@ -15,28 +15,41 @@ export interface HikDailyRow {
   date: string;
   check_in: string | null;
   check_out: string | null;
+  is_inside: boolean;
   in_count: number;
   out_count: number;
 }
 
-// Kunlik hisob: keldi = KIRISH terminalidagi birinchi qayd, ketdi = CHIQISH terminalidagi oxirgi qayd.
-// Kun chegarasi Toshkent vaqti bo'yicha.
+// Kunlik hisob (Toshkent vaqti bo'yicha):
+//  keldi  = KIRISH terminalidagi birinchi qayd (o'zgarmaydi);
+//  ketdi  = CHIQISH terminalidagi oxirgi qayd, faqat undan keyin yana kirmagan bo'lsa.
+//           Tushlikka chiqib qaytgan xodimda oraliq chiqish "ketdi" bo'lib ko'rinmasligi kerak.
+//  is_inside = oxirgi qayd kirish (hozir ofisda yoki chiqishda skanerlanmagan).
 const DAILY_SQL = `
-  SELECT e.employee_no,
-         he.name,
-         he.user_id,
-         to_char(e.event_time AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS date,
-         to_char(MIN(e.event_time) FILTER (WHERE e.direction = 'in') AT TIME ZONE 'Asia/Tashkent', 'HH24:MI') AS check_in,
-         to_char(MAX(e.event_time) FILTER (WHERE e.direction = 'out') AT TIME ZONE 'Asia/Tashkent', 'HH24:MI') AS check_out,
-         COUNT(*) FILTER (WHERE e.direction = 'in')::int AS in_count,
-         COUNT(*) FILTER (WHERE e.direction = 'out')::int AS out_count
-    FROM attendance_events e
-    LEFT JOIN hik_employees he ON he.employee_no = e.employee_no
-   WHERE e.event_time >= (CAST(:start AS timestamp) AT TIME ZONE 'Asia/Tashkent')
-     AND e.event_time <  (CAST(:next AS timestamp) AT TIME ZONE 'Asia/Tashkent')
-     %USER_FILTER%
-   GROUP BY e.employee_no, he.name, he.user_id, 4
-   ORDER BY 4, check_in NULLS LAST`;
+  SELECT employee_no, name, user_id, date,
+         to_char(first_in AT TIME ZONE 'Asia/Tashkent', 'HH24:MI') AS check_in,
+         CASE WHEN last_out IS NOT NULL AND (last_in IS NULL OR last_out > last_in)
+              THEN to_char(last_out AT TIME ZONE 'Asia/Tashkent', 'HH24:MI') END AS check_out,
+         (last_in IS NOT NULL AND (last_out IS NULL OR last_in > last_out)) AS is_inside,
+         in_count, out_count
+    FROM (
+      SELECT e.employee_no,
+             he.name,
+             he.user_id,
+             to_char(e.event_time AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM-DD') AS date,
+             MIN(e.event_time) FILTER (WHERE e.direction = 'in') AS first_in,
+             MAX(e.event_time) FILTER (WHERE e.direction = 'in') AS last_in,
+             MAX(e.event_time) FILTER (WHERE e.direction = 'out') AS last_out,
+             COUNT(*) FILTER (WHERE e.direction = 'in')::int AS in_count,
+             COUNT(*) FILTER (WHERE e.direction = 'out')::int AS out_count
+        FROM attendance_events e
+        LEFT JOIN hik_employees he ON he.employee_no = e.employee_no
+       WHERE e.event_time >= (CAST(:start AS timestamp) AT TIME ZONE 'Asia/Tashkent')
+         AND e.event_time <  (CAST(:next AS timestamp) AT TIME ZONE 'Asia/Tashkent')
+         %USER_FILTER%
+       GROUP BY e.employee_no, he.name, he.user_id, 4
+    ) d
+   ORDER BY date, first_in NULLS LAST`;
 
 const OFFICE_OPEN_MIN = 4;
 

@@ -25,6 +25,8 @@ interface LoyihaAtr {
   system_info?: string;
   area?: number;
   difficulty?: number;
+  given_date?: string;
+  finished_date?: string;
   kp_number?: string;
   kp_sum?: number;
   kp_date?: string;
@@ -87,6 +89,15 @@ export class Loyiha extends Model<Loyiha, LoyihaAtr> {
   @ApiProperty({ example: 7, description: 'Level 1-10' })
   @Column({ type: DataType.INTEGER, allowNull: true })
   declare difficulty?: number;
+
+  // Loyiha berilgan va tugatilgan kun
+  @ApiProperty({ example: '2026-10-01', description: 'Loyiha berilgan kun' })
+  @Column({ type: DataType.DATEONLY, allowNull: true })
+  declare given_date?: string;
+
+  @ApiProperty({ example: '2026-10-20', description: 'Loyiha tugatilgan kun' })
+  @Column({ type: DataType.DATEONLY, allowNull: true })
+  declare finished_date?: string;
 
   // ─── KP ma'lumotlari ───
   @ApiProperty({ example: '30399', description: 'KP raqami' })

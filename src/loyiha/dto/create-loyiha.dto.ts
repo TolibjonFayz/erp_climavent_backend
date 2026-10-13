@@ -72,6 +72,16 @@ export class CreateLoyihaDto {
   @IsOptional()
   difficulty?: number;
 
+  @ApiProperty({ example: '2026-10-01', description: 'Loyiha berilgan kun' })
+  @IsDateString()
+  @IsOptional()
+  given_date?: string | null;
+
+  @ApiProperty({ example: '2026-10-20', description: 'Loyiha tugatilgan kun' })
+  @IsDateString()
+  @IsOptional()
+  finished_date?: string | null;
+
   // ─── KP ───
   @ApiProperty({ example: '30399', description: 'KP raqami' })
   @IsString()

@@ -50,9 +50,20 @@ export class LoyihaService {
     }
   }
 
+  // Tugatilgan kun berilgan kundan oldin bo'lishi mumkin emas
+  // (YYYY-MM-DD satrlarini to'g'ridan-to'g'ri solishtirsa bo'ladi)
+  private assertDates(given?: string | null, finished?: string | null) {
+    if (given && finished && String(finished).slice(0, 10) < String(given).slice(0, 10)) {
+      throw new BadRequestException(
+        "Tugatilgan kun berilgan kundan oldin bo'lishi mumkin emas",
+      );
+    }
+  }
+
   // Tartib raqami avtomatik beriladi (formada so'ralmaydi). Serverda
   // hisoblanadi — bir vaqtda ikki xodim qo'shsa ham raqam ustma-ust tushmasin.
   async create(dto: CreateLoyihaDto, payload: AuthPayload): Promise<Loyiha> {
+    this.assertDates(dto.given_date, dto.finished_date);
     const orderNumber = dto.order_number ?? (await this.nextOrderNumber()).next;
     const created = await this.loyihaRepository.create({
       ...dto,
@@ -97,6 +108,10 @@ export class LoyihaService {
     payload: AuthPayload,
   ): Promise<Loyiha> {
     const loyiha = await this.findOne(id, payload);
+    this.assertDates(
+      dto.given_date !== undefined ? dto.given_date : loyiha.given_date,
+      dto.finished_date !== undefined ? dto.finished_date : loyiha.finished_date,
+    );
     await loyiha.update(dto as any);
     return this.findOne(id, payload);
   }

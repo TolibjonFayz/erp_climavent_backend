@@ -131,7 +131,33 @@ export class CallsListQueryDto extends PagedQueryDto {
   @IsOptional()
   @IsIn(['manual', 'staff', 'amo_tag', 'not_ours', 'internal'])
   reason?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "foreign — O'zbekistondan tashqari barcha raqamlar, yoki davlat ISO kodi (RU, KZ, XX — noma'lum)",
+  })
+  @IsOptional()
+  @Matches(/^(foreign|[A-Z]{2})$/, {
+    message: 'country: foreign yoki ikki harfli davlat kodi',
+  })
+  country?: string;
+
+  @ApiPropertyOptional({ description: 'true — faqat suhbat yozuvi borlar' })
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  has_record?: string;
+
+  @ApiPropertyOptional({
+    description: "Raqam bo'yicha qidiruv (raqamlar qismi)",
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  phone?: string;
 }
+
+// Yillik hisobot — bir so'rovda ko'pi bilan shuncha kun (kabisa yili + zaxira)
+export const YEAR_REPORT_MAX_DAYS = 400;
 
 export class SuspiciousQueryDto {
   @ApiPropertyOptional({ default: 90 })

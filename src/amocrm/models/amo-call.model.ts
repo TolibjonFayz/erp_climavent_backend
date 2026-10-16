@@ -11,6 +11,7 @@ interface AmoCallAtr {
   call_result?: string | null;
   duration?: number;
   phone?: string | null;
+  record_link?: string | null;
   responsible_user_id?: number | null;
   amo_created_at: Date;
   amo_updated_at: Date;
@@ -66,6 +67,11 @@ export class AmoCall extends Model<AmoCall, AmoCallAtr> {
 
   @Column({ type: DataType.STRING(64), allowNull: true })
   declare phone?: string | null;
+
+  // Suhbat yozuvining havolasi (params.link) — fayl telefoniyada turadi.
+  // Eski bazalarda ustun AmocrmSyncService.ensureSchema() orqali qo'shiladi.
+  @Column({ type: DataType.TEXT, allowNull: true })
+  declare record_link?: string | null;
 
   @Column({ type: DataType.INTEGER, allowNull: true })
   declare responsible_user_id?: number | null;

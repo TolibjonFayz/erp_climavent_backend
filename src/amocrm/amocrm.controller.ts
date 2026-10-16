@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -11,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AdminOrBossGuard } from 'src/guards/admin_or_boss.guard';
+import { AmocrmRecordingsService } from './amocrm-recordings.service';
 import { AmocrmService } from './amocrm.service';
 import {
   CallsListQueryDto,
@@ -25,7 +27,10 @@ import {
 @UseGuards(AdminOrBossGuard)
 @Controller('amocrm')
 export class AmocrmController {
-  constructor(private readonly amocrmService: AmocrmService) {}
+  constructor(
+    private readonly amocrmService: AmocrmService,
+    private readonly recordings: AmocrmRecordingsService,
+  ) {}
 
   @Get('stats')
   getStats(@Query() query: StatsQueryDto) {
@@ -65,6 +70,38 @@ export class AmocrmController {
   @Delete('excluded-phones/:key')
   restorePhone(@Param('key') key: string) {
     return this.amocrmService.restorePhone(key);
+  }
+
+  // Yillik hisobot uchun: davrdagi barcha qo'ng'iroqlar + oylik jamlanma
+  @Get('report')
+  report(@Query() query: StatsQueryDto) {
+    return this.amocrmService.report(query);
+  }
+
+  // ─── Suhbat yozuvlari ───
+  // Arxiv holati: nechta ko'chirildi, nechtasi telefoniyada o'chib ketgan va h.k.
+  @Get('recordings/summary')
+  recordingsSummary() {
+    return this.recordings.summary();
+  }
+
+  // Tinglash (download=false) yoki yuklab olish havolasi
+  @Get('recordings/:hash/url')
+  recordingUrl(
+    @Param('hash') hash: string,
+    @Query('download') download?: string,
+  ) {
+    if (!/^[0-9a-f]{32}$/.test(hash)) {
+      throw new BadRequestException("Yozuv identifikatori noto'g'ri");
+    }
+    return this.recordings.getUrl(hash, download === 'true');
+  }
+
+  // Butun tarixdagi qo'ng'iroqlarni (1 yildan eskilarini ham) amoCRM'dan
+  // tortib, ularning yozuvlarini ham arxivga olishga urinish
+  @Post('recordings/history')
+  recordingsHistory() {
+    return this.amocrmService.runHistorySync();
   }
 
   @Get('sync/status')

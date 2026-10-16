@@ -28,6 +28,7 @@ import { AmoPipeline } from './models/amo-pipeline.model';
 import { AmoStatus } from './models/amo-status.model';
 import { AmoSyncState } from './models/amo-sync-state.model';
 import { AmoUser } from './models/amo-user.model';
+import { AmocrmRecordingsService } from './amocrm-recordings.service';
 
 // Bitta "oyna"da nechta sahifa o'qiymiz. Undan keyin filtrni oxirgi
 // updated_at'ga surib, 1-sahifadan qayta boshlaymiz — juda chuqur sahifalashdan qochish uchun.
@@ -70,6 +71,7 @@ export class AmocrmSyncService
     @InjectModel(AmoLeadContact)
     private readonly leadContactRepo: typeof AmoLeadContact,
     @InjectModel(AmoSyncState) private readonly stateRepo: typeof AmoSyncState,
+    private readonly recordings: AmocrmRecordingsService,
   ) {}
 
   get isRunning() {
@@ -112,6 +114,11 @@ export class AmocrmSyncService
          WHERE table_name = 'amo_calls' AND column_name = 'source'`,
       );
       const hadSource = (srcCols as unknown[]).length > 0;
+      const [linkCols] = await db.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_name = 'amo_calls' AND column_name = 'record_link'`,
+      );
+      const hadRecordLink = (linkCols as unknown[]).length > 0;
 
       await db.query(`
         ALTER TABLE amo_leads
@@ -126,6 +133,13 @@ export class AmocrmSyncService
           ) STORED;
         CREATE INDEX IF NOT EXISTS amo_calls_phone_key_idx
           ON amo_calls (phone_key, amo_created_at);
+        ALTER TABLE amo_calls
+          ADD COLUMN IF NOT EXISTS record_link TEXT;
+        ALTER TABLE amo_calls
+          ADD COLUMN IF NOT EXISTS record_hash VARCHAR(32)
+          GENERATED ALWAYS AS (md5(record_link)) STORED;
+        CREATE INDEX IF NOT EXISTS amo_calls_record_hash_idx
+          ON amo_calls (record_hash) WHERE record_hash IS NOT NULL;
       `);
 
       // Yangi ustunlar to'lishi uchun keyingi sinxronizatsiya to'liq o'tsin
@@ -142,6 +156,15 @@ export class AmocrmSyncService
         });
         this.logger.log(
           "amo_calls'ga source qo'shildi — qo'ng'iroqlar qayta tortiladi",
+        );
+      }
+      // Eski qo'ng'iroqlarning yozuv havolalari to'lishi uchun qayta tortamiz
+      if (!hadRecordLink) {
+        await this.stateRepo.destroy({
+          where: { entity: AMO_NOTE_ENTITIES.map((e) => `calls_${e}`) },
+        });
+        this.logger.log(
+          "amo_calls'ga record_link qo'shildi — qo'ng'iroqlar qayta tortiladi",
         );
       }
       // Lid ↔ kontakt bog'lanishlari hali yo'q bo'lsa — lidlar to'liq qayta o'tilsin
@@ -187,6 +210,29 @@ export class AmocrmSyncService
     return { started: true };
   }
 
+  // Butun tarixdagi qo'ng'iroqlarni (1 yildan eskilarini ham) bir marta tortadi —
+  // eski yozuvlarning havolalari bazaga tushib, arxivga urinib ko'riladi.
+  triggerHistory(): { started: boolean; reason?: string } {
+    if (!this.client.isConfigured) {
+      return { started: false, reason: 'not_configured' };
+    }
+    if (this.running) {
+      return { started: false, reason: 'already_running' };
+    }
+    this.running = true;
+    (async () => {
+      try {
+        await this.step('calls_history', () => this.callsHistoryPass());
+      } finally {
+        this.running = false;
+      }
+      await this.recordings.archivePending();
+    })().catch((err) =>
+      this.logger.error(`Tarixni tortish to'xtadi: ${err.message}`),
+    );
+    return { started: true };
+  }
+
   async syncAll({ forceFull = false } = {}) {
     if (this.running || !this.client.isConfigured) return;
     this.running = true;
@@ -210,6 +256,8 @@ export class AmocrmSyncService
     } finally {
       this.running = false;
     }
+    // Yangi yozuvlarni telefoniya o'chirib yuborguncha arxivga ko'chiramiz
+    await this.recordings.archivePending();
   }
 
   // ─── Qadamlar ───────────────────────────────────────────
@@ -509,6 +557,26 @@ export class AmocrmSyncService
     return { items, cursor: Math.max(maxUpdated, cursor ?? 0) };
   }
 
+  // Barcha davrdagi qo'ng'iroq izohlari. Kursorlarga tegmaydi — oddiy
+  // inkremental sinxronizatsiya o'z joyidan davom etadi.
+  private async callsHistoryPass(): Promise<StepResult> {
+    let total = 0;
+    for (const entity of AMO_NOTE_ENTITIES) {
+      const { items } = await this.walk(
+        `${entity}/notes`,
+        'notes',
+        {
+          'filter[note_type][0]': 'call_in',
+          'filter[note_type][1]': 'call_out',
+        },
+        1,
+        (notes) => this.saveCalls(entity, notes),
+      );
+      total += items;
+    }
+    return { items: total };
+  }
+
   private async saveCalls(entity: string, notes: any[]) {
     const rows = notes
       .filter((n) => n.note_type === 'call_in' || n.note_type === 'call_out')
@@ -528,6 +596,9 @@ export class AmocrmSyncService
           duration: Number(p.duration) || 0,
           phone: p.phone ? String(p.phone).slice(0, 64) : null,
           source: p.source ? String(p.source).slice(0, 64) : null,
+          record_link: /^https?:\/\//i.test(String(p.link || ''))
+            ? String(p.link).slice(0, 2000)
+            : null,
           responsible_user_id: n.responsible_user_id || n.created_by || null,
           amo_created_at: toDate(n.created_at) as Date,
           amo_updated_at: toDate(n.updated_at) as Date,
@@ -544,6 +615,7 @@ export class AmocrmSyncService
         'duration',
         'phone',
         'source',
+        'record_link',
         'responsible_user_id',
         'amo_created_at',
         'amo_updated_at',

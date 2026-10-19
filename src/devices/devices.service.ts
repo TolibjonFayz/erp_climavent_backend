@@ -9,6 +9,12 @@ import { apnsConfigured, sendToApns } from './apns';
 type Lang = 'uz' | 'ru';
 // Xabar matni qurilma tiliga qarab quriladi
 export type LocalizedMessage = (lang: Lang) => PushMessage;
+export interface PushSummary {
+  devices: number;
+  sent: number;
+  removed: number;
+  errors: string[];
+}
 
 @Injectable()
 export class DevicesService implements OnModuleInit {
@@ -54,15 +60,21 @@ export class DevicesService implements OnModuleInit {
    * Foydalanuvchilarga yuborish. Hech qachon xato tashlamaydi — chaqiruvchi
    * `void` qilib qo'yib ketishi mumkin (asosiy amal kutib qolmaydi).
    */
-  async notifyUsers(userIds: Array<number | null | undefined>, build: LocalizedMessage, label: string) {
+  async notifyUsers(
+    userIds: Array<number | null | undefined>,
+    build: LocalizedMessage,
+    label: string,
+  ): Promise<PushSummary> {
+    const summary: PushSummary = { devices: 0, sent: 0, removed: 0, errors: [] };
     try {
       const ids = [...new Set(userIds.map(Number).filter((x) => Number.isInteger(x) && x > 0))];
-      if (!ids.length) return;
+      if (!ids.length) return summary;
       const rows = await this.tokens.findAll({
         where: { user_id: { [Op.in]: ids } },
         include: [{ model: User, attributes: ['id', 'is_blocked'] }],
       });
       const active = rows.filter((r) => !r.user?.is_blocked);
+      summary.devices = active.length;
       let sent = 0;
       let removed = 0;
       const errors: string[] = [];
@@ -80,6 +92,9 @@ export class DevicesService implements OnModuleInit {
           errors.push(r.error);
         }
       }
+      summary.sent = sent;
+      summary.removed = removed;
+      summary.errors = [...new Set(errors)];
       const tail = errors.length ? ` — xato: ${[...new Set(errors)].join(' | ')}` : '';
       this.logger.log(
         `${label}: ${ids.length} ta xodim, ${active.length} ta qurilma, ${sent} ta yuborildi` +
@@ -88,7 +103,9 @@ export class DevicesService implements OnModuleInit {
       );
     } catch (e) {
       this.logger.error(`${label}: yiqildi — ${(e as Error).message}`);
+      summary.errors.push((e as Error).message);
     }
+    return summary;
   }
 
   // Barcha faol xodimlarga (masalan, Boss e'loni)

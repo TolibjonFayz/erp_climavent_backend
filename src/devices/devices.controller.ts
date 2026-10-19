@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiProperty } from '@nestjs/swagger';
 import { JwtGuard } from 'src/guards/jwt.guard';
 import { DevicesService } from './devices.service';
@@ -36,8 +36,11 @@ export class DevicesController {
   @UseGuards(JwtGuard)
   @ApiProperty({ description: 'Send a test notification to my devices' })
   @Post('test')
-  async test(@Req() req: RequestWithPayload) {
-    await this.devices.notifyUsers(
+  async test(@Req() req: RequestWithPayload, @Query('delay') delay?: string) {
+    // Ilovani yopib qo'yib sinash uchun: xabar `delay` soniyadan keyin yuboriladi (0–30)
+    const wait = Math.min(30, Math.max(0, Number(delay) || 0));
+    if (wait) await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+    const result = await this.devices.notifyUsers(
       [userIdOf(req)],
       (lang) =>
         lang === 'ru'
@@ -45,7 +48,7 @@ export class DevicesController {
           : { title: 'Climavent ERP', body: 'Bildirishnomalar ishlayapti ✅', data: { route: '/more' } },
       `test (user ${userIdOf(req)})`,
     );
-    return { ok: true, fcm: this.devices.status() };
+    return { ok: true, fcm: this.devices.status(), ...result };
   }
 
   // FCM sozlanganmi (kalitning o'zi qaytmaydi)

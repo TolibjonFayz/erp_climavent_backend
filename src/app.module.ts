@@ -17,6 +17,8 @@ import { DogovorModule } from './dogovor/dogovor.module';
 import { LoyihaModule } from './loyiha/loyiha.module';
 import { StorageModule } from './storage/storage.module';
 import { AmocrmModule } from './amocrm/amocrm.module';
+import { DevicesModule } from './devices/devices.module';
+import { AppReleasesModule } from './app_releases/app-releases.module';
 
 @Module({
   imports: [
@@ -56,6 +58,8 @@ import { AmocrmModule } from './amocrm/amocrm.module';
     StorageModule,
     LoyihaModule,
     AmocrmModule,
+    DevicesModule,
+    AppReleasesModule,
   ],
   controllers: [],
   providers: [

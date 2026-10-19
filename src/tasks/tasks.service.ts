@@ -10,6 +10,7 @@ import { Tasks } from './models/task.model';
 import { User } from 'src/users/models/user.model';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { DevicesService } from 'src/devices/devices.service';
 
 export interface AuthPayload {
   user_id: number;
@@ -19,6 +20,16 @@ export interface AuthPayload {
 // Bosqichlar tartibi — oldinga siljish uchun tasdiq kerak
 const STAGE_ORDER = ['todo', 'in_progress', 'done'];
 const stageIndex = (status: string) => STAGE_ORDER.indexOf(status);
+
+// Bildirishnoma matnlari uchun bosqich nomlari
+const STAGE_LABEL = {
+  uz: { todo: 'Bajarilishi kerak', in_progress: 'Jarayonda', done: 'Bajarildi' },
+  ru: { todo: 'К выполнению', in_progress: 'В работе', done: 'Выполнено' },
+};
+const stageLabel = (lang: 'uz' | 'ru', status: string) => STAGE_LABEL[lang][status] || status;
+const personName = (u?: { firstname?: string; lastname?: string } | null) =>
+  u ? `${u.firstname || ''} ${u.lastname || ''}`.trim() : '';
+
 
 // assignee/creator/approver ni parolsiz qaytarish uchun umumiy include
 const userInclude = [
@@ -44,7 +55,52 @@ export class TasksService {
   constructor(
     @InjectModel(Tasks) private readonly TasksRepository: typeof Tasks,
     @InjectModel(User) private readonly UsersRepository: typeof User,
+    private readonly devices: DevicesService,
   ) {}
+
+  // ─── Push-bildirishnomalar (xato bo'lsa ham asosiy amal buzilmaydi) ───
+  private notifyAssigned(task: Tasks) {
+    void this.devices.notifyUsers(
+      [task.assigned_to],
+      (lang) => ({
+        title: lang === 'ru' ? 'Новая задача' : 'Yangi vazifa',
+        body: task.title,
+        data: { route: '/tasks', task_id: task.id },
+      }),
+      `vazifa #${task.id} biriktirildi`,
+    );
+  }
+
+  private async notifyApprovalRequested(task: Tasks) {
+    const approverId = await this.getApproverId();
+    const targets = approverId ? [approverId] : await this.devices.adminIds();
+    const who = personName(task.assignee);
+    void this.devices.notifyUsers(
+      targets.filter((id) => id !== Number(task.assigned_to)),
+      (lang) => ({
+        title: lang === 'ru' ? 'Запрос на подтверждение' : "Tasdiq so'rovi",
+        body: `${who ? `${who}: ` : ''}${task.title} → ${stageLabel(lang, task.pending_status || '')}`,
+        data: { route: '/tasks', task_id: task.id },
+      }),
+      `vazifa #${task.id} tasdiq so'rovi`,
+    );
+  }
+
+  private notifyDecision(task: Tasks, approved: boolean, reason?: string | null) {
+    void this.devices.notifyUsers(
+      [task.assigned_to],
+      (lang) => ({
+        title: approved
+          ? lang === 'ru' ? 'Подтверждено ✅' : 'Tasdiqlandi ✅'
+          : lang === 'ru' ? 'Отклонено' : 'Rad etildi',
+        body: approved
+          ? `${task.title} → ${stageLabel(lang, task.status)}`
+          : `${task.title}${reason ? ` — ${reason}` : ''}`,
+        data: { route: '/tasks', task_id: task.id },
+      }),
+      `vazifa #${task.id} ${approved ? 'tasdiqlandi' : 'rad etildi'}`,
+    );
+  }
 
   // ─── Tasdiqlovchi (Gulshoda) ────────────────────────────────────────
   // .env dagi TASK_APPROVER_USER_ID birinchi o'rinda; bo'lmasa ism bo'yicha
@@ -87,8 +143,10 @@ export class TasksService {
   // ─── CRUD ───────────────────────────────────────────────────────────
 
   // Vazifa yaratish (admin biriktiradi)
-  createTask(createTaskDto: CreateTaskDto) {
-    return this.TasksRepository.create(createTaskDto);
+  async createTask(createTaskDto: CreateTaskDto) {
+    const task = await this.TasksRepository.create(createTaskDto);
+    this.notifyAssigned(task);
+    return task;
   }
 
   // Barcha vazifalar (admin uchun)
@@ -145,7 +203,9 @@ export class TasksService {
     }
 
     await this.TasksRepository.update(payload, { where: { id } });
-    return this.findOneTask(id);
+    const updated = await this.findOneTask(id);
+    if (assigneeChanged && updated) this.notifyAssigned(updated);
+    return updated;
   }
 
   // Statusni yangilash.
@@ -219,7 +279,9 @@ export class TasksService {
       },
       { where: { id } },
     );
-    return this.findOneTask(id);
+    const updated = await this.findOneTask(id);
+    if (updated) this.notifyApprovalRequested(updated).catch(() => {});
+    return updated;
   }
 
   // Xodim o'z so'rovini qaytarib oladi
@@ -263,7 +325,9 @@ export class TasksService {
       },
       { where: { id } },
     );
-    return this.findOneTask(id);
+    const updated = await this.findOneTask(id);
+    if (updated) this.notifyDecision(updated, true);
+    return updated;
   }
 
   // Rad etish — vazifa joyida qoladi, sabab saqlanadi
@@ -284,7 +348,9 @@ export class TasksService {
       },
       { where: { id } },
     );
-    return this.findOneTask(id);
+    const updated = await this.findOneTask(id);
+    if (updated) this.notifyDecision(updated, false, reason?.trim() || null);
+    return updated;
   }
 
   // Tasdiq kutayotgan vazifalar (tasdiqlovchi/admin uchun)

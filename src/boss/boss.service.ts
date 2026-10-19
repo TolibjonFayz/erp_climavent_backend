@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/sequelize';
 import { BossTarget } from './models/boss_target.model';
 import { Announcement } from './models/announcement.model';
 import { User } from 'src/users/models/user.model';
+import { DevicesService } from 'src/devices/devices.service';
 import {
   CreateAnnouncementDto,
   CreateTargetDto,
@@ -22,6 +23,7 @@ export class BossService {
     @InjectModel(BossTarget) private readonly TargetRepo: typeof BossTarget,
     @InjectModel(Announcement) private readonly AnnRepo: typeof Announcement,
     @InjectModel(User) private readonly UserRepo: typeof User,
+    private readonly devices: DevicesService,
   ) {}
 
   // ─── Targets ───
@@ -54,8 +56,20 @@ export class BossService {
   }
 
   // ─── Announcements ───
-  createAnnouncement(dto: CreateAnnouncementDto) {
-    return this.AnnRepo.create(dto);
+  async createAnnouncement(dto: CreateAnnouncementDto) {
+    const ann = await this.AnnRepo.create(dto);
+    // E'lon — barcha xodimlarga bildirishnoma (o'zidan tashqari)
+    void this.devices.notifyAll(
+      () => ({
+        // Modelda `declare` yo'q — qiymatlar DTO'dan olinadi (getter soyalanishi)
+        title: `📢 ${dto.title}`,
+        body: dto.message,
+        data: { route: '/more', announcement_id: ann.get('id') as number },
+      }),
+      `e'lon #${ann.get('id')}`,
+      Number((dto as any).created_by),
+    );
+    return ann;
   }
 
   getAnnouncements() {

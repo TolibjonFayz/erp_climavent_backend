@@ -479,26 +479,41 @@ export class SkladService {
     return this.sequelize.transaction(async (transaction) => {
       const existing = await this.itemRepo.findAll({ attributes: ['id', 'name_key'], transaction });
       const idByKey = new Map(existing.map((i) => [i.name_key, i.id]));
+      // Tartib, nom va guruh faqat eng oxirgi oy varag'idan olinadi (eski oyni qayta
+      // sinxronlash joriy tartibni buzmasin). Varaqdagi № har guruhda qaytadan
+      // boshlanishi mumkin, shuning uchun tartib = varaqdagi qator o'rni.
+      const [{ latest }] = await this.sequelize.query<{ latest: string | null }>(
+        `SELECT MAX(source_period) AS latest FROM sklad_movements
+          WHERE source = 'sheet' AND source_period <> :period`,
+        { replacements: { period }, type: QueryTypes.SELECT, transaction },
+      );
+      const isLatest = !latest || period >= latest;
 
       // Mahsulotlar: nom bo'yicha topiladi, yo'q bo'lsa yaratiladi; guruh/tartib yangilanadi
       let created = 0;
       const seen = new Set<string>();
       const upserts: any[] = [];
-      for (const row of parsed.rows) {
+      parsed.rows.forEach((row, pos) => {
         const key = nameKey(row.name);
-        if (seen.has(key)) continue;
+        if (seen.has(key)) return;
         seen.add(key);
         const id = idByKey.get(key);
         if (!id) created++;
-        upserts.push({
-          ...(id ? { id } : { code: this.takeCode(seq, row.group_name) }),
-          name: row.name,
-          name_key: key,
-          group_name: row.group_name,
-          sub_group: row.sub_group,
-          sort_order: row.row_no,
-        });
-      }
+        upserts.push(
+          id
+            ? isLatest
+              ? { id, name: row.name, group_name: row.group_name, sub_group: row.sub_group, sort_order: pos + 1 }
+              : { id }
+            : {
+                code: this.takeCode(seq, row.group_name),
+                name: row.name,
+                name_key: key,
+                group_name: row.group_name,
+                sub_group: row.sub_group,
+                sort_order: (isLatest ? 0 : 500000) + pos + 1,
+              },
+        );
+      });
       const newOnes = upserts.filter((u) => !u.id);
       for (const b of chunk(newOnes, BATCH)) {
         const rows = await this.itemRepo.bulkCreate(b, { transaction, returning: ['id', 'name_key'] });
@@ -508,8 +523,9 @@ export class SkladService {
       for (const b of chunk(upserts.filter((u) => u.id), BATCH)) {
         await this.sequelize.query(
           `UPDATE sklad_items i
-              SET name = v.name, group_name = v.group_name, sub_group = v.sub_group,
-                  sort_order = v.sort_order, "updatedAt" = now()
+              SET name = COALESCE(v.name, i.name), group_name = COALESCE(v.group_name, i.group_name),
+                  sub_group = COALESCE(v.sub_group, i.sub_group),
+                  sort_order = COALESCE(v.sort_order, i.sort_order), "updatedAt" = now()
              FROM json_to_recordset(:rows) AS v(id int, name text, group_name text, sub_group text, sort_order int)
             WHERE i.id = v.id`,
           { replacements: { rows: JSON.stringify(b) }, transaction },
@@ -537,9 +553,11 @@ export class SkladService {
       // Bu oy varag'ida yo'q mahsulotlar — jadvaldagidek oy boshidan 0 (nomi o'zgargan
       // yoki ro'yxatdan olib tashlangan qator eski qoldiqni olib yurmasin)
       let missing = 0;
+      const missingIds: number[] = [];
       for (const [key, item_id] of idByKey) {
         if (done.has(key)) continue;
         missing++;
+        missingIds.push(item_id);
         moves.push({
           item_id,
           type: 'snapshot',
@@ -553,6 +571,13 @@ export class SkladService {
       }
       for (const b of chunk(moves, BATCH)) {
         await this.moveRepo.bulkCreate(b, { transaction });
+      }
+      // Oxirgi varaqda yo'q mahsulotlar ro'yxat oxiriga tushadi
+      if (isLatest && missingIds.length) {
+        await this.sequelize.query(
+          `UPDATE sklad_items SET sort_order = 1000000 + id WHERE id IN (:ids)`,
+          { replacements: { ids: missingIds }, transaction },
+        );
       }
       await src.update({ period }, { transaction });
       return {

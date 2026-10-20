@@ -19,6 +19,7 @@ import { StorageModule } from './storage/storage.module';
 import { AmocrmModule } from './amocrm/amocrm.module';
 import { DevicesModule } from './devices/devices.module';
 import { AppReleasesModule } from './app_releases/app-releases.module';
+import { SkladModule } from './sklad/sklad.module';
 
 @Module({
   imports: [
@@ -36,12 +37,16 @@ import { AppReleasesModule } from './app_releases/app-releases.module';
       database: process.env.POSTGRES_DB,
       autoLoadModels: true,
       logging: false,
-      dialectOptions: {
-        ssl: {
-          require: true,
-          rejectUnauthorized: false,
-        },
-      },
+      // POSTGRES_SSL=false — faqat lokal sinov bazasi uchun (Railway'da SSL shart)
+      dialectOptions:
+        process.env.POSTGRES_SSL === 'false'
+          ? {}
+          : {
+              ssl: {
+                require: true,
+                rejectUnauthorized: false,
+              },
+            },
       models: [User],
     }),
     UsersModule,
@@ -60,6 +65,7 @@ import { AppReleasesModule } from './app_releases/app-releases.module';
     AmocrmModule,
     DevicesModule,
     AppReleasesModule,
+    SkladModule,
   ],
   controllers: [],
   providers: [

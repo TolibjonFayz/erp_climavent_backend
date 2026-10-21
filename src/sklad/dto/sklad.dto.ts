@@ -78,6 +78,12 @@ export class CreateItemDto {
   @MaxLength(500)
   name: string;
 
+  @ApiPropertyOptional({ example: 'ВКП 70х40-4D35,5 3/1400' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  sap_name?: string;
+
   @ApiPropertyOptional({ example: 'Вентильяторы' })
   @IsOptional()
   @IsString()
@@ -109,6 +115,12 @@ export class UpdateItemDto {
   @IsNotEmpty()
   @MaxLength(500)
   name?: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  sap_name?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

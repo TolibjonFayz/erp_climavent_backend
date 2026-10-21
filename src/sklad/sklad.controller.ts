@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -9,9 +10,12 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBody, ApiConsumes, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JwtGuard } from 'src/guards/jwt.guard';
 import {
   AddSourceDto,
@@ -22,6 +26,7 @@ import {
   UpdateSettingsDto,
 } from './dto/sklad.dto';
 import { AuthPayload, SkladService } from './sklad.service';
+import { SheetFormatError } from './sheet-parser';
 
 interface RequestWithPayload {
   payload: AuthPayload;
@@ -112,6 +117,27 @@ export class SkladController {
   ) {
     await this.skladService.assertAdmin(req.payload);
     return this.skladService.updateItem(id, dto);
+  }
+
+  @Post('sap-import')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 30 * 1024 * 1024 } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiOperation({ summary: "SAP mahsulotlar ro'yxatini (Excel) yuklab, SAP kodi/nomini biriktirish (admin)" })
+  async sapImport(@UploadedFile() file: Express.Multer.File, @Req() req: RequestWithPayload) {
+    await this.skladService.assertAdmin(req.payload);
+    if (!file?.buffer) {
+      throw new BadRequestException({ message: 'Fayl yuborilmadi', code: 'SK_FILE_REQUIRED' });
+    }
+    try {
+      return await this.skladService.importSap(file.buffer);
+    } catch (e: any) {
+      // Fayl formati xatosi (kod bilan) — 400
+      if (e instanceof SheetFormatError) {
+        throw new BadRequestException({ message: e.message, code: e.code });
+      }
+      throw e;
+    }
   }
 
   @Get('contracts')

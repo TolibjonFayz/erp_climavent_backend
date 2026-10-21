@@ -10,6 +10,7 @@ export interface SkladItemAtr {
   sub_group?: string | null;
   unit?: string;
   sap_code?: string | null;
+  sap_name?: string | null;
   min_qty?: number | null;
   sort_order?: number | null;
   is_active?: boolean;
@@ -23,7 +24,7 @@ export class SkladItem extends Model<SkladItem, SkladItemAtr> {
   @Column({ type: DataType.INTEGER, autoIncrement: true, primaryKey: true })
   declare id: number;
 
-  // ERP ichki kodi: guruh prefiksi + tartib raqami (VEN-0001). O'zgarmaydi.
+  // ERP ichki texnik kodi (VEN-0001) — ekranda ko'rsatilmaydi, o'rniga SAP kodi.
   @ApiProperty({ example: 'VEN-0001' })
   @Column({ type: DataType.STRING(32), allowNull: false, unique: true })
   declare code: string;
@@ -49,9 +50,15 @@ export class SkladItem extends Model<SkladItem, SkladItemAtr> {
   @Column({ type: DataType.STRING(16), allowNull: false, defaultValue: 'dona' })
   declare unit: string;
 
-  @ApiProperty({ example: null, description: 'SAP code (kelajakda SAP bilan bog\'lash uchun)' })
+  // Xodimlar mahsulotni SAP kodi va nomi bilan taniydi — ekranda shular ko'rsatiladi.
+  // Jadvaldan sinxron bu maydonlarga tegmaydi (SAP ro'yxatini yuklash yoki qo'lda).
+  @ApiProperty({ example: '01-0001', description: 'SAP kodi' })
   @Column({ type: DataType.STRING, allowNull: true })
   declare sap_code: string | null;
+
+  @ApiProperty({ example: 'ВКП 70х40-4D35,5 3/1400', description: 'SAP nomi' })
+  @Column({ type: DataType.TEXT, allowNull: true })
+  declare sap_name: string | null;
 
   // Shu miqdordan kam qolsa "kam qoldi" deb belgilanadi
   @ApiProperty({ example: 5 })

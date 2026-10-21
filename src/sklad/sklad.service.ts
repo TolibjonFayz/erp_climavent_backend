@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { Op, QueryTypes, WhereOptions } from 'sequelize';
@@ -20,6 +21,7 @@ import { SkladItem } from './models/sklad-item.model';
 import { MovementType, SkladMovement } from './models/sklad-movement.model';
 import { SkladSetting } from './models/sklad-setting.model';
 import { SkladSource } from './models/sklad-source.model';
+import { matchKey, parseSapWorkbook } from './sap-import';
 import {
   lastDayOf,
   nameKey,
@@ -114,7 +116,7 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 @Injectable()
-export class SkladService {
+export class SkladService implements OnApplicationBootstrap {
   private readonly logger = new Logger(SkladService.name);
 
   constructor(
@@ -127,6 +129,16 @@ export class SkladService {
     @InjectModel(User) private readonly userRepo: typeof User,
     private readonly sequelize: Sequelize,
   ) {}
+
+  // sequelize sync mavjud jadvalga yangi ustun qo'shmaydi — keyin qo'shilgan ustunlar
+  // shu yerda (idempotent) qo'shiladi
+  async onApplicationBootstrap() {
+    try {
+      await this.sequelize.query(`ALTER TABLE sklad_items ADD COLUMN IF NOT EXISTS sap_name TEXT`);
+    } catch (e: any) {
+      this.logger.error(`sklad_items.sap_name qo'shilmadi: ${e?.message}`);
+    }
+  }
 
   // AdminGuard o'rniga: u ruxsat yo'qligida 401 qaytaradi, frontend esa har 401'da
   // tizimdan chiqarib yuboradi. Bu yerda 403 qaytadi va admin holati bazadan olinadi.
@@ -283,7 +295,7 @@ export class SkladService {
     return this.moveRepo.findAll({
       where,
       include: [
-        { model: SkladItem, attributes: ['id', 'code', 'name', 'group_name', 'unit'] },
+        { model: SkladItem, attributes: ['id', 'code', 'name', 'group_name', 'unit', 'sap_code', 'sap_name'] },
         { model: User, as: 'creator', attributes: ['id', 'firstname', 'lastname'] },
       ],
       order: [['move_date', 'DESC'], ['id', 'DESC']],
@@ -406,6 +418,7 @@ export class SkladService {
       group_name: dto.group_name?.trim() || null,
       unit: dto.unit?.trim() || 'dona',
       sap_code: dto.sap_code?.trim() || null,
+      sap_name: dto.sap_name?.replace(/\s+/g, ' ').trim() || null,
       min_qty: dto.min_qty ?? null,
     });
   }
@@ -414,6 +427,9 @@ export class SkladService {
     const item = await this.itemRepo.findByPk(id);
     if (!item) throw skError(NotFoundException, 'SK_ITEM_NOT_FOUND', 'Mahsulot topilmadi');
     const patch: Record<string, unknown> = { ...dto };
+    // Bo'sh qiymat — tozalash
+    if (dto.sap_code !== undefined) patch.sap_code = dto.sap_code.trim() || null;
+    if (dto.sap_name !== undefined) patch.sap_name = dto.sap_name.replace(/\s+/g, ' ').trim() || null;
     if (dto.name) {
       patch.name = dto.name.replace(/\s+/g, ' ').trim();
       patch.name_key = nameKey(dto.name);
@@ -422,9 +438,69 @@ export class SkladService {
     return item;
   }
 
+  // ─── SAP ro'yxatini yuklash ─────────────────────────────────────────
+  // SAP'dan eksport qilingan Excel (kod + nom). Har ombor mahsulotiga nom bo'yicha
+  // (yoki avval biriktirilgan SAP kodi bo'yicha) SAP kodi va nomi yoziladi.
+  async importSap(buffer: Buffer) {
+    const sapRows = parseSapWorkbook(buffer);
+    const items = await this.itemRepo.findAll({ attributes: ['id', 'name', 'sap_code', 'sap_name'] });
+
+    const byKey = new Map<string, SkladItem[]>();
+    for (const it of items) {
+      for (const k of new Set([matchKey(it.name), it.sap_name ? matchKey(it.sap_name) : ''])) {
+        if (!k) continue;
+        byKey.set(k, [...(byKey.get(k) || []), it]);
+      }
+    }
+    const byCode = new Map(items.filter((i) => i.sap_code).map((i) => [i.sap_code!, i]));
+
+    const updates = new Map<number, { id: number; sap_code: string; sap_name: string }>();
+    let duplicates = 0;
+    for (const row of sapRows) {
+      // 1) avval biriktirilgan kod bo'yicha (SAP'da nom o'zgargan bo'lsa ham)
+      const byPrev = byCode.get(row.code);
+      const cands = byPrev ? [byPrev] : byKey.get(matchKey(row.name)) || [];
+      for (const it of cands) {
+        if (updates.has(it.id) && updates.get(it.id)!.sap_code !== row.code) {
+          duplicates++;
+          continue;
+        }
+        updates.set(it.id, { id: it.id, sap_code: row.code, sap_name: row.name });
+      }
+    }
+
+    let changed = 0;
+    const list = [...updates.values()];
+    for (const b of chunk(list, BATCH)) {
+      const [, count] = (await this.sequelize.query(
+        `UPDATE sklad_items i SET sap_code = v.sap_code, sap_name = v.sap_name, "updatedAt" = now()
+           FROM json_to_recordset(:rows) AS v(id int, sap_code text, sap_name text)
+          WHERE i.id = v.id
+            AND (i.sap_code IS DISTINCT FROM v.sap_code OR i.sap_name IS DISTINCT FROM v.sap_name)`,
+        { replacements: { rows: JSON.stringify(b) }, type: QueryTypes.UPDATE },
+      )) as unknown as [unknown, number];
+      changed += Number(count) || 0;
+    }
+
+    const linked = new Set(list.map((u) => u.id));
+    const unmatched = items
+      .filter((i) => !linked.has(i.id) && !i.sap_code)
+      .map((i) => i.name)
+      .sort((a, b) => a.localeCompare(b, 'ru'));
+    return {
+      sap_rows: sapRows.length,
+      items: items.length,
+      matched: linked.size,
+      changed,
+      duplicates,
+      unmatched_total: unmatched.length,
+      unmatched: unmatched.slice(0, 300),
+    };
+  }
+
   async contracts() {
     return this.contractRepo.findAll({
-      include: [{ model: SkladItem, attributes: ['id', 'code', 'name', 'unit'] }],
+      include: [{ model: SkladItem, attributes: ['id', 'code', 'name', 'unit', 'sap_code', 'sap_name'] }],
       order: [['row_no', 'ASC NULLS LAST'], ['id', 'ASC']],
     });
   }

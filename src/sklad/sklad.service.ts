@@ -26,6 +26,8 @@ import {
   parseContractsSheet,
   parseMonthSheet,
   parseSheetLink,
+  SheetFormatError,
+  SYS_NOTE,
 } from './sheet-parser';
 
 export interface AuthPayload {
@@ -93,6 +95,18 @@ const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const currentPeriod = () => todayStr().slice(0, 7);
 
+// Foydalanuvchiga ko'rinadigan xato: `code` (+ `params`) bo'yicha frontend tanlangan tilga
+// tarjima qiladi; `message` — o'zbekcha zaxira matn (Swagger, loglar, eski mijozlar uchun)
+type HttpExceptionClass = new (body: Record<string, unknown>) => Error;
+function skError(
+  Exception: HttpExceptionClass,
+  code: string,
+  message: string,
+  params?: Record<string, unknown>,
+) {
+  return new Exception({ message, code, ...(params ? { params } : {}) });
+}
+
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -118,7 +132,7 @@ export class SkladService {
   // tizimdan chiqarib yuboradi. Bu yerda 403 qaytadi va admin holati bazadan olinadi.
   async assertAdmin(payload: AuthPayload) {
     const user = await this.userRepo.findByPk(payload.user_id, { attributes: ['id', 'is_admin'] });
-    if (!user?.is_admin) throw new ForbiddenException('Bu amal faqat admin uchun');
+    if (!user?.is_admin) throw skError(ForbiddenException, 'SK_ADMIN_ONLY', 'Bu amal faqat admin uchun');
   }
 
   // ─── Sozlamalar ─────────────────────────────────────────────────────
@@ -279,7 +293,7 @@ export class SkladService {
 
   async itemDetail(id: number) {
     const item = await this.itemRepo.findByPk(id);
-    if (!item) throw new NotFoundException('Mahsulot topilmadi');
+    if (!item) throw skError(NotFoundException, 'SK_ITEM_NOT_FOUND', 'Mahsulot topilmadi');
     const [moves, balance, contracts] = await Promise.all([
       this.moveRepo.findAll({
         where: { item_id: id },
@@ -295,22 +309,33 @@ export class SkladService {
 
   async createMovement(dto: CreateMovementDto, payload: AuthPayload) {
     if ((await this.getMode()) !== 'live') {
-      throw new BadRequestException(
+      throw skError(
+        BadRequestException,
+        'SK_MIRROR_MODE',
         "Ombor hozir Google Sheets rejimida — harakatlar jadvaldan olinadi. Admin 'ERP asosiy' rejimini yoqgach kiritish ochiladi.",
       );
     }
     const item = await this.itemRepo.findByPk(dto.item_id);
-    if (!item) throw new NotFoundException('Mahsulot topilmadi');
+    if (!item) throw skError(NotFoundException, 'SK_ITEM_NOT_FOUND', 'Mahsulot topilmadi');
     const qty = Number(dto.qty);
-    if (!Number.isFinite(qty) || qty === 0) throw new BadRequestException("Miqdor 0 bo'lmasligi kerak");
-    if (dto.type !== 'adjust' && qty < 0) throw new BadRequestException("Miqdor musbat bo'lishi kerak");
+    if (!Number.isFinite(qty) || qty === 0) {
+      throw skError(BadRequestException, 'SK_QTY_ZERO', "Miqdor 0 bo'lmasligi kerak");
+    }
+    if (dto.type !== 'adjust' && qty < 0) {
+      throw skError(BadRequestException, 'SK_QTY_NEGATIVE', "Miqdor musbat bo'lishi kerak");
+    }
     if (dto.type === 'adjust' && !dto.comment?.trim()) {
-      throw new BadRequestException('Tuzatish uchun sabab (izoh) yozing');
+      throw skError(BadRequestException, 'SK_ADJUST_REASON', 'Tuzatish uchun sabab (izoh) yozing');
     }
     if (dto.type === 'out' || dto.type === 'reserve') {
       const bal = await this.currentBalance(item.id);
       if (qty > bal && !(dto.force && payload.is_admin)) {
-        throw new BadRequestException(`Omborda faqat ${bal} ${item.unit} bor — ${qty} chiqarib bo'lmaydi`);
+        throw skError(
+          BadRequestException,
+          'SK_NOT_ENOUGH',
+          `Omborda faqat ${bal} ${item.unit} bor — ${qty} chiqarib bo'lmaydi`,
+          { balance: bal, qty, unit: item.unit },
+        );
       }
     }
     const created = await this.moveRepo.create({
@@ -331,16 +356,20 @@ export class SkladService {
 
   async removeMovement(id: number, payload: AuthPayload) {
     const m = await this.moveRepo.findByPk(id);
-    if (!m) throw new NotFoundException('Yozuv topilmadi');
+    if (!m) throw skError(NotFoundException, 'SK_MOVE_NOT_FOUND', 'Yozuv topilmadi');
     if (m.source !== 'erp') {
-      throw new ForbiddenException("Jadvaldan kelgan yozuvni o'chirib bo'lmaydi — Google Sheets'da tuzating");
+      throw skError(
+        ForbiddenException,
+        'SK_SHEET_MOVE_LOCKED',
+        "Jadvaldan kelgan yozuvni o'chirib bo'lmaydi — Google Sheets'da tuzating",
+      );
     }
     if (!payload.is_admin) {
       if (Number(m.created_by) !== Number(payload.user_id)) {
-        throw new ForbiddenException("Faqat kiritgan xodim yoki admin o'chira oladi");
+        throw skError(ForbiddenException, 'SK_NOT_OWNER', "Faqat kiritgan xodim yoki admin o'chira oladi");
       }
       if (Date.now() - new Date(m.get('createdAt') as Date).getTime() > EDIT_WINDOW_MS) {
-        throw new ForbiddenException("2 kundan oshgan yozuvni faqat admin o'chira oladi");
+        throw skError(ForbiddenException, 'SK_EDIT_WINDOW', "2 kundan oshgan yozuvni faqat admin o'chira oladi");
       }
     }
     await m.destroy();
@@ -367,7 +396,7 @@ export class SkladService {
   async createItem(dto: CreateItemDto) {
     const key = nameKey(dto.name);
     if (await this.itemRepo.findOne({ where: { name_key: key } })) {
-      throw new BadRequestException('Bunday nomli mahsulot allaqachon bor');
+      throw skError(BadRequestException, 'SK_ITEM_EXISTS', 'Bunday nomli mahsulot allaqachon bor');
     }
     const seq = await this.nextCodes();
     return this.itemRepo.create({
@@ -383,7 +412,7 @@ export class SkladService {
 
   async updateItem(id: number, dto: UpdateItemDto) {
     const item = await this.itemRepo.findByPk(id);
-    if (!item) throw new NotFoundException('Mahsulot topilmadi');
+    if (!item) throw skError(NotFoundException, 'SK_ITEM_NOT_FOUND', 'Mahsulot topilmadi');
     const patch: Record<string, unknown> = { ...dto };
     if (dto.name) {
       patch.name = dto.name.replace(/\s+/g, ' ').trim();
@@ -412,7 +441,7 @@ export class SkladService {
 
   async addSource(dto: AddSourceDto) {
     const { sheetId, gid } = parseSheetLink(dto.link);
-    if (!gid) throw new BadRequestException("Havolada varaq raqami (gid=...) topilmadi");
+    if (!gid) throw skError(BadRequestException, 'SK_LINK_NO_GID', 'Havolada varaq raqami (gid=...) topilmadi');
     const sheet_id = sheetId || DEFAULT_SHEET_ID;
     const exists = await this.sourceRepo.findOne({ where: { sheet_id, gid } });
     if (exists) return exists;
@@ -421,7 +450,7 @@ export class SkladService {
 
   async removeSource(id: number) {
     const s = await this.sourceRepo.findByPk(id);
-    if (!s) throw new NotFoundException('Manba topilmadi');
+    if (!s) throw skError(NotFoundException, 'SK_SOURCE_NOT_FOUND', 'Manba topilmadi');
     await s.destroy();
     return { message: "O'chirildi (import qilingan ma'lumotlar saqlanib qoladi)" };
   }
@@ -431,8 +460,11 @@ export class SkladService {
     const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(30000) });
     const text = await res.text();
     if (!res.ok || /^\s*<!doctype html/i.test(text)) {
-      throw new BadRequestException(
+      throw skError(
+        BadRequestException,
+        'SK_SHEET_UNREADABLE',
         `Google Sheets varag'ini o'qib bo'lmadi (HTTP ${res.status}). Jadval "havolasi borlar ko'ra oladi" qilib ochilganini tekshiring.`,
+        { status: res.status },
       );
     }
     return text;
@@ -440,13 +472,15 @@ export class SkladService {
 
   async sync(sourceId: number | undefined, payload: AuthPayload) {
     if ((await this.getMode()) === 'live') {
-      throw new BadRequestException(
+      throw skError(
+        BadRequestException,
+        'SK_LIVE_MODE',
         "ERP asosiy rejimda — Google Sheets sinxroni o'chirilgan (harakatlar ikki marta sanalmasin).",
       );
     }
     const all = await this.sources();
     const list = sourceId ? all.filter((s) => s.id === sourceId) : all;
-    if (!list.length) throw new NotFoundException('Manba topilmadi');
+    if (!list.length) throw skError(NotFoundException, 'SK_SOURCE_NOT_FOUND', 'Manba topilmadi');
     // Avval oylik varaqlar (mahsulotlar yaratiladi), keyin shartnomalar (nom bo'yicha bog'lanadi)
     list.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'month' ? -1 : 1));
     const results: any[] = [];
@@ -462,7 +496,14 @@ export class SkladService {
         result.ok = true;
       } catch (e: any) {
         this.logger.warn(`Sklad sync ${src.id} failed: ${e?.message}`);
-        result = { ok: false, error: e?.response?.message || e?.message || 'Xatolik' };
+        // Kod (SheetFormatError yoki skError) bo'lsa — frontend tarjima qiladi
+        const body = e?.getResponse?.() ?? {};
+        result = {
+          ok: false,
+          code: e instanceof SheetFormatError ? e.code : body.code || 'SK_SYNC_FAILED',
+          params: (e instanceof SheetFormatError ? e.params : body.params) || null,
+          error: body.message || e?.message || 'Xatolik',
+        };
       }
       result.ms = Date.now() - started;
       await src.update({ last_synced_at: new Date(), last_result: result });
@@ -545,7 +586,7 @@ export class SkladService {
         done.add(key);
         const item_id = idByKey.get(key)!;
         const base = { item_id, source: 'sheet', source_period: period, created_by: userId };
-        moves.push({ ...base, type: 'snapshot', qty: row.opening, move_date: `${period}-01`, comment: 'Oy boshi (jadvaldan)' });
+        moves.push({ ...base, type: 'snapshot', qty: row.opening, move_date: `${period}-01`, comment: SYS_NOTE.opening });
         for (const m of row.moves) {
           moves.push({ ...base, type: m.type, qty: m.qty, move_date: m.date, comment: m.comment ?? null });
         }
@@ -563,7 +604,7 @@ export class SkladService {
           type: 'snapshot',
           qty: 0,
           move_date: `${period}-01`,
-          comment: "Bu oy varag'ida yo'q",
+          comment: SYS_NOTE.missing,
           source: 'sheet',
           source_period: period,
           created_by: userId,

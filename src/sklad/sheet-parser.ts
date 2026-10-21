@@ -7,6 +7,26 @@
 //     1..31 (kunlik kirim) | ИТОГО ПРИХОД | "2окт." / "20.10.2026" (chiqim sanalari) | ...
 //   Formula: факт = НАЧАЛО + ПРИХОД - РАСХОД - РЕЗЕРВ.
 
+// Varaq formati kutilganidek bo'lmasa — kod bilan xato (frontend tilga qarab tarjima qiladi)
+export class SheetFormatError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly params?: Record<string, unknown>,
+  ) {
+    super(message);
+  }
+}
+
+// Tizim izohlari bazaga kod sifatida yoziladi ("sys:..."), matni frontend'da tarjima qilinadi
+export const SYS_NOTE = {
+  opening: 'sys:opening',
+  missing: 'sys:missing',
+  noDate: 'sys:no_date',
+  totalDiff: 'sys:total_diff',
+  reserve: 'sys:reserve',
+} as const;
+
 export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
@@ -139,10 +159,20 @@ export interface ParsedMonthRow {
   moves: ParsedMove[];
 }
 
+// Jadvalning o'zidagi nomuvofiqlik (matni frontend'da tarjima qilinadi)
+export interface SheetWarning {
+  item: string;
+  kind: 'in_over' | 'out_over' | 'fact';
+  daily?: number;
+  total?: number;
+  fact?: number;
+  computed?: number;
+}
+
 export interface ParsedMonth {
   period: string;
   rows: ParsedMonthRow[];
-  warnings: string[];
+  warnings: SheetWarning[];
 }
 
 const norm = (v: unknown) => clean(v).toLowerCase();
@@ -151,7 +181,10 @@ export function parseMonthSheet(csv: string, today = new Date()): ParsedMonth {
   const rows = parseCsv(csv);
   const headerIdx = rows.findIndex((r) => r.some((c) => norm(c) === 'наименования'));
   if (headerIdx < 0) {
-    throw new Error("Varaqda 'Наименования' sarlavhasi topilmadi — bu oylik qoldiq varag'i emas");
+    throw new SheetFormatError(
+      'SK_SHEET_NO_HEADER',
+      "Varaqda 'Наименования' sarlavhasi topilmadi — bu oylik qoldiq varag'i emas",
+    );
   }
   const header = rows[headerIdx].map(norm);
 
@@ -163,7 +196,9 @@ export function parseMonthSheet(csv: string, today = new Date()): ParsedMonth {
     }
     if (period) break;
   }
-  if (!period) throw new Error("Varaq sarlavhasidan oy aniqlanmadi (masalan 'ОКТЯБРЬ 2026')");
+  if (!period) {
+    throw new SheetFormatError('SK_SHEET_NO_PERIOD', "Varaq sarlavhasidan oy aniqlanmadi (masalan 'ОКТЯБРЬ 2026')");
+  }
 
   const find = (pred: (h: string) => boolean, from = 0) => {
     for (let i = from; i < header.length; i++) if (pred(header[i])) return i;
@@ -185,7 +220,7 @@ export function parseMonthSheet(csv: string, today = new Date()): ParsedMonth {
     inTotal: find((h) => h === 'итого приход'),
   };
   for (const k of ['name', 'opening', 'in', 'out', 'inTotal'] as const) {
-    if (col[k] < 0) throw new Error(`Varaqda kerakli ustun topilmadi: ${k}`);
+    if (col[k] < 0) throw new SheetFormatError('SK_SHEET_NO_COLUMN', `Varaqda kerakli ustun topilmadi: ${k}`, { col: k });
   }
   // Kunlik kirim: "ИТОГО ПРИХОД" dan oldingi 1..31 raqamli ustunlar
   const inDays: Array<[number, string]> = [];
@@ -205,7 +240,7 @@ export function parseMonthSheet(csv: string, today = new Date()): ParsedMonth {
   const monthEnd = lastDayOf(period);
   const todayStr = today.toISOString().slice(0, 10);
   const fallbackDate = todayStr < monthEnd && todayStr >= `${period}-01` ? todayStr : monthEnd;
-  const warnings: string[] = [];
+  const warnings: SheetWarning[] = [];
   const out: ParsedMonthRow[] = [];
 
   for (const r of rows.slice(headerIdx + 1)) {
@@ -227,7 +262,7 @@ export function parseMonthSheet(csv: string, today = new Date()): ParsedMonth {
       moves.push(
         d
           ? { type: 'out', qty: q, date: d }
-          : { type: 'out', qty: q, date: fallbackDate, comment: "Jadvalda sana ko'rsatilmagan" },
+          : { type: 'out', qty: q, date: fallbackDate, comment: SYS_NOTE.noDate },
       );
       outSum += q;
     }
@@ -235,20 +270,20 @@ export function parseMonthSheet(csv: string, today = new Date()): ParsedMonth {
     const outTotal = toQty(r[col.out]) ?? 0;
     // Jami ustun — asosiy manba. Kunlik kataklar bilan farq bo'lsa, farqni oy oxiriga yozamiz
     const inDiff = round(inTotal - inSum);
-    if (inDiff > 0) moves.push({ type: 'in', qty: inDiff, date: fallbackDate, comment: 'Jadval jami bilan farq' });
-    else if (inDiff < 0) warnings.push(`${name}: kunlik kirim (${inSum}) jamidan (${inTotal}) ko'p`);
+    if (inDiff > 0) moves.push({ type: 'in', qty: inDiff, date: fallbackDate, comment: SYS_NOTE.totalDiff });
+    else if (inDiff < 0) warnings.push({ item: name, kind: 'in_over', daily: inSum, total: inTotal });
     const outDiff = round(outTotal - outSum);
-    if (outDiff > 0) moves.push({ type: 'out', qty: outDiff, date: fallbackDate, comment: 'Jadval jami bilan farq' });
-    else if (outDiff < 0) warnings.push(`${name}: kunlik chiqim (${outSum}) jamidan (${outTotal}) ko'p`);
+    if (outDiff > 0) moves.push({ type: 'out', qty: outDiff, date: fallbackDate, comment: SYS_NOTE.totalDiff });
+    else if (outDiff < 0) warnings.push({ item: name, kind: 'out_over', daily: outSum, total: outTotal });
 
     const reserve = col.reserve >= 0 ? toQty(r[col.reserve]) ?? 0 : 0;
-    if (reserve > 0) moves.push({ type: 'reserve', qty: reserve, date: fallbackDate, comment: 'Jadvaldagi rezerv' });
+    if (reserve > 0) moves.push({ type: 'reserve', qty: reserve, date: fallbackDate, comment: SYS_NOTE.reserve });
 
     const opening = toQty(r[col.opening]) ?? 0;
     const fact = col.fact >= 0 ? toQty(r[col.fact]) : null;
     const computed = round(opening + Math.max(inTotal, inSum) - Math.max(outTotal, outSum) - reserve);
     if (fact !== null && round(fact) !== computed) {
-      warnings.push(`${name}: jadvaldagi "факт" ${fact}, hisoblangani ${computed}`);
+      warnings.push({ item: name, kind: 'fact', fact, computed });
     }
     out.push({
       row_no: col.no >= 0 ? toQty(r[col.no]) : null,
@@ -282,7 +317,7 @@ export interface ParsedContractLine {
 export function parseContractsSheet(csv: string): ParsedContractLine[] {
   const rows = parseCsv(csv);
   const headerIdx = rows.findIndex((r) => r.some((c) => norm(c) === 'договор'));
-  if (headerIdx < 0) throw new Error("Varaqda 'договор' sarlavhasi topilmadi");
+  if (headerIdx < 0) throw new SheetFormatError('SK_CONTRACTS_NO_HEADER', "Varaqda 'договор' sarlavhasi topilmadi");
   const header = rows[headerIdx].map(norm);
   const idx = (pred: (h: string) => boolean) => header.findIndex(pred);
   const col = {
@@ -293,7 +328,7 @@ export function parseContractsSheet(csv: string): ParsedContractLine[] {
     in: idx((h) => h === 'приход'),
     out: idx((h) => h === 'расход'),
   };
-  if (col.name < 0) throw new Error("Varaqda nomlar ustuni topilmadi");
+  if (col.name < 0) throw new SheetFormatError('SK_CONTRACTS_NO_NAME', 'Varaqda nomlar ustuni topilmadi');
   const result: ParsedContractLine[] = [];
   let currentDog: string | null = null;
   for (const r of rows.slice(headerIdx + 1)) {

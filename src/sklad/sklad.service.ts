@@ -21,7 +21,7 @@ import { SkladItem } from './models/sklad-item.model';
 import { MovementType, SkladMovement } from './models/sklad-movement.model';
 import { SkladSetting } from './models/sklad-setting.model';
 import { SkladSource } from './models/sklad-source.model';
-import { matchKey, parseSapWorkbook } from './sap-import';
+import { matchKey, matchTokens, parseSapWorkbook } from './sap-import';
 import {
   lastDayOf,
   nameKey,
@@ -443,6 +443,7 @@ export class SkladService implements OnApplicationBootstrap {
   // (yoki avval biriktirilgan SAP kodi bo'yicha) SAP kodi va nomi yoziladi.
   async importSap(buffer: Buffer) {
     const sapRows = parseSapWorkbook(buffer);
+    const withCode = sapRows.some((r) => r.code);
     const items = await this.itemRepo.findAll({ attributes: ['id', 'name', 'sap_code', 'sap_name'] });
 
     const byKey = new Map<string, SkladItem[]>();
@@ -454,45 +455,76 @@ export class SkladService implements OnApplicationBootstrap {
     }
     const byCode = new Map(items.filter((i) => i.sap_code).map((i) => [i.sap_code!, i]));
 
-    const updates = new Map<number, { id: number; sap_code: string; sap_name: string }>();
-    let duplicates = 0;
+    // Har mahsulot uchun eng ishonchli moslik: avval biriktirilgan kod (-1), SAP nomi (0),
+    // qo'shimcha nom — model/ichki nom (1). Bir xil ishonchlilikda ikki xil SAP nomi
+    // chiqsa — taxmin qilinmaydi, "aniqlanmagan" ro'yxatiga tushadi.
+    const best = new Map<number, { prio: number; code: string | null; name: string }>();
+    const ambiguous = new Set<number>();
+    const offer = (it: SkladItem, prio: number, row: { code: string | null; name: string }) => {
+      const cur = best.get(it.id);
+      if (!cur || prio < cur.prio) {
+        best.set(it.id, { prio, code: row.code, name: row.name });
+        ambiguous.delete(it.id);
+      } else if (prio === cur.prio && cur.name !== row.name) {
+        ambiguous.add(it.id);
+      }
+    };
     for (const row of sapRows) {
-      // 1) avval biriktirilgan kod bo'yicha (SAP'da nom o'zgargan bo'lsa ham)
-      const byPrev = byCode.get(row.code);
-      const cands = byPrev ? [byPrev] : byKey.get(matchKey(row.name)) || [];
-      for (const it of cands) {
-        if (updates.has(it.id) && updates.get(it.id)!.sap_code !== row.code) {
-          duplicates++;
-          continue;
-        }
-        updates.set(it.id, { id: it.id, sap_code: row.code, sap_name: row.name });
+      const prev = row.code ? byCode.get(row.code) : undefined;
+      if (prev) offer(prev, -1, row);
+      for (const it of byKey.get(matchKey(row.name)) || []) offer(it, 0, row);
+      for (const alt of row.alts) for (const it of byKey.get(matchKey(alt)) || []) offer(it, 1, row);
+    }
+    // Eng past ustuvorlik (2): ombor nomining OXIRGI so'zlari SAP nomiga teng, oldida tavsif
+    // ("Вентилятор канальный ВК Ø100 П" → "ВК-100П"). So'z chegarasi shart — "ВКК-100П"
+    // "ВК-100П" ga bog'lanmaydi.
+    const sapBySuffix = new Map<string, Array<{ code: string | null; name: string }>>();
+    for (const row of sapRows) {
+      const k = matchKey(row.name);
+      if (k.length >= 5) sapBySuffix.set(k, [...(sapBySuffix.get(k) || []), row]);
+    }
+    for (const it of items) {
+      if (best.has(it.id) || ambiguous.has(it.id) || it.sap_name) continue;
+      const tokens = matchTokens(it.name);
+      for (let i = 1; i < tokens.length; i++) {
+        const rows = sapBySuffix.get(tokens.slice(i).join(''));
+        if (!rows) continue;
+        for (const row of rows) offer(it, 2, row);
+        break; // eng uzun mos keladigan oxiri
       }
     }
+    for (const id of ambiguous) best.delete(id);
 
+    // Kodsiz fayl (masalan sayt katalogi) avval biriktirilgan SAP kodini o'chirmaydi
+    const list = [...best.entries()].map(([id, m]) => ({ id, sap_code: m.code, sap_name: m.name }));
     let changed = 0;
-    const list = [...updates.values()];
     for (const b of chunk(list, BATCH)) {
       const [, count] = (await this.sequelize.query(
-        `UPDATE sklad_items i SET sap_code = v.sap_code, sap_name = v.sap_name, "updatedAt" = now()
+        `UPDATE sklad_items i
+            SET sap_code = COALESCE(v.sap_code, i.sap_code), sap_name = v.sap_name, "updatedAt" = now()
            FROM json_to_recordset(:rows) AS v(id int, sap_code text, sap_name text)
           WHERE i.id = v.id
-            AND (i.sap_code IS DISTINCT FROM v.sap_code OR i.sap_name IS DISTINCT FROM v.sap_name)`,
+            AND (i.sap_code IS DISTINCT FROM COALESCE(v.sap_code, i.sap_code) OR i.sap_name IS DISTINCT FROM v.sap_name)`,
         { replacements: { rows: JSON.stringify(b) }, type: QueryTypes.UPDATE },
       )) as unknown as [unknown, number];
       changed += Number(count) || 0;
     }
 
     const linked = new Set(list.map((u) => u.id));
+    const byName = (a: string, b: string) => a.localeCompare(b, 'ru');
     const unmatched = items
-      .filter((i) => !linked.has(i.id) && !i.sap_code)
+      .filter((i) => !linked.has(i.id) && !ambiguous.has(i.id) && !i.sap_code && !i.sap_name)
       .map((i) => i.name)
-      .sort((a, b) => a.localeCompare(b, 'ru'));
+      .sort(byName);
+    const ambiguousNames = items.filter((i) => ambiguous.has(i.id)).map((i) => i.name).sort(byName);
     return {
       sap_rows: sapRows.length,
+      with_code: withCode,
       items: items.length,
       matched: linked.size,
       changed,
-      duplicates,
+      ambiguous_total: ambiguousNames.length,
+      ambiguous: ambiguousNames.slice(0, 100),
       unmatched_total: unmatched.length,
       unmatched: unmatched.slice(0, 300),
     };

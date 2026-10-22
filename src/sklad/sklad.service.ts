@@ -22,6 +22,7 @@ import { MovementType, SkladMovement } from './models/sklad-movement.model';
 import { SkladSetting } from './models/sklad-setting.model';
 import { SkladSource } from './models/sklad-source.model';
 import { matchKey, matchTokens, parseSapWorkbook } from './sap-import';
+import { TrainingService } from 'src/training/training.service';
 import {
   lastDayOf,
   nameKey,
@@ -128,6 +129,7 @@ export class SkladService implements OnApplicationBootstrap {
     @InjectModel(SkladSetting) private readonly settingRepo: typeof SkladSetting,
     @InjectModel(User) private readonly userRepo: typeof User,
     private readonly sequelize: Sequelize,
+    private readonly training: TrainingService,
   ) {}
 
   // sequelize sync mavjud jadvalga yangi ustun qo'shmaydi — keyin qo'shilgan ustunlar
@@ -325,6 +327,14 @@ export class SkladService implements OnApplicationBootstrap {
         BadRequestException,
         'SK_MIRROR_MODE',
         "Ombor hozir Google Sheets rejimida — harakatlar jadvaldan olinadi. Admin 'ERP asosiy' rejimini yoqgach kiritish ochiladi.",
+      );
+    }
+    // Testdan o'tmagan xodim kirim/chiqim kirita olmaydi (admin bundan mustasno)
+    if (!payload.is_admin && !(await this.training.hasPassed(payload.user_id, 'sklad'))) {
+      throw skError(
+        ForbiddenException,
+        'SK_TRAINING_REQUIRED',
+        "Kirim/chiqim kiritish uchun avval Ombor bo'yicha testdan o'ting",
       );
     }
     const item = await this.itemRepo.findByPk(dto.item_id);

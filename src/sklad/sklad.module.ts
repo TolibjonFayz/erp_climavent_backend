@@ -8,6 +8,7 @@ import { SkladMovement } from './models/sklad-movement.model';
 import { SkladContractLine } from './models/sklad-contract-line.model';
 import { SkladSource } from './models/sklad-source.model';
 import { SkladSetting } from './models/sklad-setting.model';
+import { TrainingModule } from 'src/training/training.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { SkladSetting } from './models/sklad-setting.model';
       SkladSetting,
     ]),
     JwtModule.register({}),
+    TrainingModule,
   ],
   controllers: [SkladController],
   providers: [SkladService],

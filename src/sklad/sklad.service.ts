@@ -22,6 +22,7 @@ import { MovementType, SkladMovement } from './models/sklad-movement.model';
 import { SkladSetting } from './models/sklad-setting.model';
 import { SkladSource } from './models/sklad-source.model';
 import { matchKey, matchTokens, parseSapWorkbook } from './sap-import';
+import { buildSapIndex, findFuzzy, nameSig } from './sap-match';
 import { TrainingService } from 'src/training/training.service';
 import {
   lastDayOf,
@@ -137,8 +138,11 @@ export class SkladService implements OnApplicationBootstrap {
   async onApplicationBootstrap() {
     try {
       await this.sequelize.query(`ALTER TABLE sklad_items ADD COLUMN IF NOT EXISTS sap_name TEXT`);
+      await this.sequelize.query(
+        `ALTER TABLE sklad_items ADD COLUMN IF NOT EXISTS sap_approx BOOLEAN NOT NULL DEFAULT false`,
+      );
     } catch (e: any) {
-      this.logger.error(`sklad_items.sap_name qo'shilmadi: ${e?.message}`);
+      this.logger.error(`sklad_items SAP ustunlari qo'shilmadi: ${e?.message}`);
     }
   }
 
@@ -439,7 +443,11 @@ export class SkladService implements OnApplicationBootstrap {
     const patch: Record<string, unknown> = { ...dto };
     // Bo'sh qiymat — tozalash
     if (dto.sap_code !== undefined) patch.sap_code = dto.sap_code.trim() || null;
-    if (dto.sap_name !== undefined) patch.sap_name = dto.sap_name.replace(/\s+/g, ' ').trim() || null;
+    if (dto.sap_name !== undefined) {
+      patch.sap_name = dto.sap_name.replace(/\s+/g, ' ').trim() || null;
+      // Xodim SAP nomini o'zi saqladi — endi taxminiy emas
+      patch.sap_approx = false;
+    }
     if (dto.name) {
       patch.name = dto.name.replace(/\s+/g, ' ').trim();
       patch.name_key = nameKey(dto.name);
@@ -454,11 +462,15 @@ export class SkladService implements OnApplicationBootstrap {
   async importSap(buffer: Buffer) {
     const sapRows = parseSapWorkbook(buffer);
     const withCode = sapRows.some((r) => r.code);
-    const items = await this.itemRepo.findAll({ attributes: ['id', 'name', 'sap_code', 'sap_name'] });
+    const items = await this.itemRepo.findAll({
+      attributes: ['id', 'name', 'sap_code', 'sap_name', 'sap_approx'],
+    });
+    // Qo'lda kiritilgan yoki aynan mos SAP nomi — o'zgarmas; taxminiy moslik har yuklashda qayta hisoblanadi
+    const confirmedSap = (it: SkladItem) => !!it.sap_name && !it.sap_approx;
 
     const byKey = new Map<string, SkladItem[]>();
     for (const it of items) {
-      for (const k of new Set([matchKey(it.name), it.sap_name ? matchKey(it.sap_name) : ''])) {
+      for (const k of new Set([matchKey(it.name), confirmedSap(it) ? matchKey(it.sap_name!) : ''])) {
         if (!k) continue;
         byKey.set(k, [...(byKey.get(k) || []), it]);
       }
@@ -468,12 +480,12 @@ export class SkladService implements OnApplicationBootstrap {
     // Har mahsulot uchun eng ishonchli moslik: avval biriktirilgan kod (-1), SAP nomi (0),
     // qo'shimcha nom — model/ichki nom (1). Bir xil ishonchlilikda ikki xil SAP nomi
     // chiqsa — taxmin qilinmaydi, "aniqlanmagan" ro'yxatiga tushadi.
-    const best = new Map<number, { prio: number; code: string | null; name: string }>();
+    const best = new Map<number, { prio: number; code: string | null; name: string; approx: boolean }>();
     const ambiguous = new Set<number>();
-    const offer = (it: SkladItem, prio: number, row: { code: string | null; name: string }) => {
+    const offer = (it: SkladItem, prio: number, row: { code: string | null; name: string }, approx = false) => {
       const cur = best.get(it.id);
       if (!cur || prio < cur.prio) {
-        best.set(it.id, { prio, code: row.code, name: row.name });
+        best.set(it.id, { prio, code: row.code, name: row.name, approx });
         ambiguous.delete(it.id);
       } else if (prio === cur.prio && cur.name !== row.name) {
         ambiguous.add(it.id);
@@ -494,7 +506,7 @@ export class SkladService implements OnApplicationBootstrap {
       if (k.length >= 5) sapBySuffix.set(k, [...(sapBySuffix.get(k) || []), row]);
     }
     for (const it of items) {
-      if (best.has(it.id) || ambiguous.has(it.id) || it.sap_name) continue;
+      if (best.has(it.id) || ambiguous.has(it.id) || confirmedSap(it)) continue;
       const tokens = matchTokens(it.name);
       for (let i = 1; i < tokens.length; i++) {
         const rows = sapBySuffix.get(tokens.slice(i).join(''));
@@ -503,18 +515,36 @@ export class SkladService implements OnApplicationBootstrap {
         break; // eng uzun mos keladigan oxiri
       }
     }
+    // Eng past ustuvorlik (3) — "aqlli" moslik: nomlar 1:1 bir xil emas (Ц/О, "-1-", "покуп", "2,0"/"2",
+    // ortiqcha dvigatel ma'lumoti), lekin oila va barcha o'lcham/quvvat raqamlari mos. Batafsil — sap-match.ts
+    const index = buildSapIndex(
+      sapRows.map((r) => ({ name: r.name, code: r.code, sigs: [r.name, ...r.alts].map(nameSig) })),
+    );
+    for (const it of items) {
+      if (best.has(it.id) || ambiguous.has(it.id) || confirmedSap(it)) continue;
+      const found = findFuzzy(it.name, index);
+      if (found.ambiguous) ambiguous.add(it.id);
+      else if (found.result) offer(it, 3, found.result.row, !found.result.exact);
+    }
     for (const id of ambiguous) best.delete(id);
 
     // Kodsiz fayl (masalan sayt katalogi) avval biriktirilgan SAP kodini o'chirmaydi
-    const list = [...best.entries()].map(([id, m]) => ({ id, sap_code: m.code, sap_name: m.name }));
+    const list = [...best.entries()].map(([id, m]) => ({
+      id,
+      sap_code: m.code,
+      sap_name: m.name,
+      sap_approx: m.approx,
+    }));
     let changed = 0;
     for (const b of chunk(list, BATCH)) {
       const [, count] = (await this.sequelize.query(
         `UPDATE sklad_items i
-            SET sap_code = COALESCE(v.sap_code, i.sap_code), sap_name = v.sap_name, "updatedAt" = now()
-           FROM json_to_recordset(:rows) AS v(id int, sap_code text, sap_name text)
+            SET sap_code = COALESCE(v.sap_code, i.sap_code), sap_name = v.sap_name,
+                sap_approx = v.sap_approx, "updatedAt" = now()
+           FROM json_to_recordset(:rows) AS v(id int, sap_code text, sap_name text, sap_approx boolean)
           WHERE i.id = v.id
-            AND (i.sap_code IS DISTINCT FROM COALESCE(v.sap_code, i.sap_code) OR i.sap_name IS DISTINCT FROM v.sap_name)`,
+            AND (i.sap_code IS DISTINCT FROM COALESCE(v.sap_code, i.sap_code)
+              OR i.sap_name IS DISTINCT FROM v.sap_name OR i.sap_approx IS DISTINCT FROM v.sap_approx)`,
         { replacements: { rows: JSON.stringify(b) }, type: QueryTypes.UPDATE },
       )) as unknown as [unknown, number];
       changed += Number(count) || 0;
@@ -527,11 +557,18 @@ export class SkladService implements OnApplicationBootstrap {
       .map((i) => i.name)
       .sort(byName);
     const ambiguousNames = items.filter((i) => ambiguous.has(i.id)).map((i) => i.name).sort(byName);
+    // Taxminiy bog'langanlar — admin ko'zdan kechirishi uchun (ombor nomi → SAP nomi)
+    const approx = items
+      .filter((i) => best.get(i.id)?.approx)
+      .map((i) => ({ name: i.name, sap_name: best.get(i.id)!.name }))
+      .sort((a, b) => byName(a.name, b.name));
     return {
       sap_rows: sapRows.length,
       with_code: withCode,
       items: items.length,
       matched: linked.size,
+      approx_total: approx.length,
+      approx: approx.slice(0, 300),
       changed,
       ambiguous_total: ambiguousNames.length,
       ambiguous: ambiguousNames.slice(0, 100),

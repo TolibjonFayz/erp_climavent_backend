@@ -11,6 +11,7 @@ export interface SkladItemAtr {
   unit?: string;
   sap_code?: string | null;
   sap_name?: string | null;
+  sap_approx?: boolean;
   min_qty?: number | null;
   sort_order?: number | null;
   is_active?: boolean;
@@ -59,6 +60,12 @@ export class SkladItem extends Model<SkladItem, SkladItemAtr> {
   @ApiProperty({ example: 'ВКП 70х40-4D35,5 3/1400', description: 'SAP nomi' })
   @Column({ type: DataType.TEXT, allowNull: true })
   declare sap_name: string | null;
+
+  // SAP nomi "aqlli" moslik bilan topilgan (nomlar biroz farq qiladi) — ekranda ≈ bilan ko'rsatiladi,
+  // xodim tekshirib qo'lda tasdiqlashi mumkin. Qo'lda kiritilgan yoki aynan mos nom — false.
+  @ApiProperty({ example: false })
+  @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: false })
+  declare sap_approx: boolean;
 
   // Shu miqdordan kam qolsa "kam qoldi" deb belgilanadi
   @ApiProperty({ example: 5 })

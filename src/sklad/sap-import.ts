@@ -25,7 +25,7 @@ const ALT_HEADER = /^(model|модель|ichki model nomi|внутренн(ее|
 const clean = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim();
 
 // Lotin harflari bilan yozilgan, kirillchaga o'xshash harflar (С/C, Х/X, О/O ...) bir xil hisoblanadi
-const LOOKALIKE: Record<string, string> = {
+export const LOOKALIKE: Record<string, string> = {
   a: 'а', b: 'в', c: 'с', e: 'е', h: 'н', k: 'к', m: 'м', o: 'о', p: 'р', t: 'т', x: 'х', y: 'у',
   ё: 'е', '×': 'х', '*': 'х',
 };

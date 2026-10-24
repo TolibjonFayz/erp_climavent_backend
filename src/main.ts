@@ -1,9 +1,10 @@
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as cookieParser from 'cookie-parser';
-import { NestFactory } from '@nestjs/core';
+import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
+import { AppExceptionFilter } from './common/filters/app-exception.filter';
 
 import { NestExpressApplication } from '@nestjs/platform-express';
 
@@ -38,6 +39,8 @@ const start = async () => {
 
     app.use(cookieParser());
     app.useGlobalPipes(new ValidationPipe());
+    // Baza xatolari (dublikat, uzun matn va h.k.) 500 o'rniga tushunarli xabar bilan qaytadi
+    app.useGlobalFilters(new AppExceptionFilter(app.get(HttpAdapterHost).httpAdapter));
     await app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
     });

@@ -1,7 +1,7 @@
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginUserDto } from './dto/login-user.dto';
 import { InjectModel } from '@nestjs/sequelize';
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { User } from './models/user.model';
 import * as bcrypt from 'bcrypt';
 import { SessionsService } from './sessions.service';
@@ -132,6 +132,16 @@ export class UsersService {
       updatedUser: stripSecrets(updatedUser[1][0]),
       message: 'User updated successfully',
     };
+  }
+
+  // Joriy parolni tekshirish. 400 (401 emas): frontend 401 da tizimdan chiqaradi
+  async assertPassword(id: number, plain?: string) {
+    if (!plain) throw new BadRequestException('Joriy parolni kiriting');
+    const user = await this.UsersRepository.unscoped().findByPk(id);
+    const hash = user?.get('password') as string | undefined;
+    if (!hash || !(await bcrypt.compare(plain, hash))) {
+      throw new BadRequestException("Joriy parol noto'g'ri");
+    }
   }
 
   //Update user password by user id

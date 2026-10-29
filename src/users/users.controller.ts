@@ -124,9 +124,12 @@ export class UsersController {
     @Body() updateUserPasswordDto: UpdateUserPasswordDto,
     @Req() req: any,
   ): Promise<any> {
+    const self = Number(req?.user?.user_id) === Number(id);
+    // O'z parolini almashtirish — joriy parol bilan (ochiq qolgan telefon/brauzerdan
+    // begona odam parolni o'zgartirib, akkauntni egallab ololmasin)
+    if (self) await this.usersService.assertPassword(id, updateUserPasswordDto.old_password);
     const result = await this.usersService.updateUserPasswordById(id, updateUserPasswordDto);
     // Parol almashdi — boshqa qurilmalar qayta kirsin. O'zi almashtirsa, joriy sessiya qoladi
-    const self = Number(req?.user?.user_id) === Number(id);
     await this.sessions.revokeAll(Number(id), self ? req.user.sid : undefined);
     return result;
   }

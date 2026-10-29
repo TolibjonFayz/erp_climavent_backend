@@ -11,6 +11,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PartnersService } from './partners.service';
+import { PartnerRelatedService } from './partner-related.service';
 import { CreatePartnerDto } from './dto/create-partner.dto';
 import { UpdatePartnerDto } from './dto/update-partner.dto';
 import { ApiProperty } from '@nestjs/swagger';
@@ -20,7 +21,10 @@ import { assertOwnerOrAdmin, ownUserId } from 'src/common/ownership';
 
 @Controller('partners')
 export class PartnersController {
-  constructor(private readonly partnersService: PartnersService) {}
+  constructor(
+    private readonly partnersService: PartnersService,
+    private readonly relatedService: PartnerRelatedService,
+  ) {}
 
   // Mijoz egasi — faqat u va admin ko'radi/o'zgartiradi
   private async assertAccess(id: number, req: any) {
@@ -62,6 +66,15 @@ export class PartnersController {
   @Get('one/:id')
   findOne(@Param('id') id: string, @Req() req: any) {
     return this.assertAccess(+id, req);
+  }
+
+  //Mijoz kartasi 360°: bog'liq KP, shartnoma, loyiha, tashriflar
+  @UseGuards(JwtGuard)
+  @ApiProperty({ description: 'Related KP, contracts, projects and visits of a partner' })
+  @Get('related/:id')
+  async related(@Param('id') id: string, @Req() req: any) {
+    const partner = await this.assertAccess(+id, req);
+    return this.relatedService.related(partner, req.payload);
   }
 
   //Update a partner by id

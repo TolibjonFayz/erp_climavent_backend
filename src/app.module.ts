@@ -13,6 +13,7 @@ import { TasksModule } from './tasks/tasks.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { BossModule } from './boss/boss.module';
 import { KpModule } from './kp/kp.module';
+import { CompetitorsModule } from './competitors/competitors.module';
 import { DogovorModule } from './dogovor/dogovor.module';
 import { LoyihaModule } from './loyiha/loyiha.module';
 import { StorageModule } from './storage/storage.module';
@@ -60,6 +61,7 @@ import { TrainingModule } from './training/training.module';
     AttendanceModule,
     BossModule,
     KpModule,
+    CompetitorsModule,
     DogovorModule,
     StorageModule,
     LoyihaModule,

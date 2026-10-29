@@ -3,8 +3,8 @@ import { LoginUserDto } from './dto/login-user.dto';
 import { InjectModel } from '@nestjs/sequelize';
 import { Injectable } from '@nestjs/common';
 import { User } from './models/user.model';
-import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import { SessionsService } from './sessions.service';
 import { Response } from 'express';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
@@ -14,7 +14,7 @@ import { stripSecrets } from 'src/common/ownership';
 export class UsersService {
   constructor(
     @InjectModel(User) private readonly UsersRepository: typeof User,
-    private readonly jwtservice: JwtService,
+    private readonly sessions: SessionsService,
   ) {}
   // Register user
   async registerUser(createUserDto: CreateUserDto, res: Response) {
@@ -49,7 +49,11 @@ export class UsersService {
   }
 
   // Login user
-  async loginUser(loginuserDto: LoginUserDto, res: Response) {
+  async loginUser(
+    loginuserDto: LoginUserDto,
+    res: Response,
+    client: { userAgent?: string; ip?: string } = {},
+  ) {
     //Is user exists?
     let user = await this.UsersRepository.unscoped().findOne({
       where: { username: loginuserDto.username },
@@ -83,25 +87,12 @@ export class UsersService {
       });
     }
 
-    //Generate new tokens
-    const tokens = await this.getTokens(user);
-    const hashed_refresh_token = await bcrypt.hash(tokens.refreshToken, 7);
-    const updateUser = await this.UsersRepository.update(
-      { refresh_token: hashed_refresh_token },
-      { where: { id: user.id }, returning: true },
-    );
-
-    //Cookie setting
-    res.cookie('refresh_token', tokens.refreshToken, {
-      maxAge: 15 * 24 * 60 * 60 * 1000,
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    });
+    // Har bir login — alohida qurilma sessiyasi (sayt va telefon bir-birini chiqarmaydi)
+    const tokens = await this.sessions.issue(user, client);
 
     const response = {
       message: 'Verification code sent to user',
-      user: stripSecrets(updateUser[1][0]),
+      user: stripSecrets(user),
       tokens,
     };
     return response;
@@ -159,28 +150,6 @@ export class UsersService {
     return {
       updatedUser: stripSecrets(updatedUser[1][0]),
       message: 'User password updated successfully',
-    };
-  }
-
-  //Token generation
-  async getTokens(user: User) {
-    const JwtPayload = {
-      user_id: user.dataValues.id,
-      is_admin: user.dataValues.is_admin,
-    };
-    const [accessToken, refreshToken] = await Promise.all([
-      this.jwtservice.signAsync(JwtPayload, {
-        secret: process.env.ACCESS_TOKEN_KEY_USER,
-        expiresIn: process.env.ACCESS_TOKEN_TIME_USER,
-      }),
-      this.jwtservice.signAsync(JwtPayload, {
-        secret: process.env.REFRESH_TOKEN_KEY_USER,
-        expiresIn: process.env.REFRESH_TOKEN_TIME_USER,
-      }),
-    ]);
-    return {
-      accessToken: accessToken,
-      refreshToken: refreshToken,
     };
   }
 }

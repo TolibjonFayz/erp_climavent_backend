@@ -7,7 +7,8 @@ import { RequestMethod } from '@nestjs/common';
 // Har bir API route'da guard bo'lishi shart. 2026-10 da partners, audit-logs, come-and-goes
 // va location-videos login'siz ochiq qolib ketgan edi — yangi endpoint guard'siz qo'shilsa,
 // shu test yiqiladi. Ataylab ochiq route'lar faqat shu ro'yxatda.
-const PUBLIC_ROUTES = new Set(['POST users/login']);
+// refresh/logout o'zi refresh token'ni tekshiradi (access token muddati o'tgan bo'ladi)
+const PUBLIC_ROUTES = new Set(['POST users/login', 'POST users/refresh', 'POST users/logout']);
 
 function controllerFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {

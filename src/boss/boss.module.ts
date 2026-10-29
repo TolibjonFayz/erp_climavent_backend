@@ -1,3 +1,4 @@
+import { AnnouncementsFeedController } from './announcements-feed.controller';
 import { Module } from '@nestjs/common';
 import { BossService } from './boss.service';
 import { BossController } from './boss.controller';
@@ -12,7 +13,7 @@ import { JwtModule } from '@nestjs/jwt';
     SequelizeModule.forFeature([BossTarget, Announcement, User]),
     JwtModule.register({}),
   ],
-  controllers: [BossController],
+  controllers: [BossController, AnnouncementsFeedController],
   providers: [BossService],
   exports: [BossService],
 })

@@ -81,6 +81,17 @@ export class BossService {
     });
   }
 
+  getAnnouncementFeed(limit = 20) {
+    return this.AnnRepo.findAll({
+      attributes: ['id', 'title', 'message', 'createdAt'],
+      include: [
+        { model: User, as: 'author', attributes: ['id', 'firstname', 'lastname'] },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+    });
+  }
+
   async deleteAnnouncement(id: number) {
     const n = await this.AnnRepo.destroy({ where: { id } });
     if (!n) throw new NotFoundException('Announcement not found');

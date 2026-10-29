@@ -19,6 +19,9 @@ const start = async () => {
     app.use(helmet({
       crossOriginResourcePolicy: { policy: "cross-origin" },
     }));
+    // JSON javoblarni gzip bilan siqish: dogovor/all (~8.7k qator) 6.7 MB → ~0.5 MB
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    app.use(require('compression')());
 
     app.enableCors({
       origin: true, // Accepts any origin dynamically (required for credentials: true across different domains)

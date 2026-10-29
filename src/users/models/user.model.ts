@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Table, Model, Column, DataType } from 'sequelize-typescript';
+import { Table, Model, Column, DataType, DefaultScope } from 'sequelize-typescript';
 
 interface UserAtr {
   firstname: string;
@@ -15,6 +15,9 @@ interface UserAtr {
   permissions?: any;
 }
 
+// Parol va refresh token hech qaysi javobga (include: { all: true } orqali ham) tushmasin.
+// Login ularni .unscoped() bilan o'qiydi
+@DefaultScope(() => ({ attributes: { exclude: ['password', 'refresh_token'] } }))
 @Table({ tableName: 'users' })
 export class User extends Model<User, UserAtr> {
   @ApiProperty({ example: 1, description: 'Unique id' })
@@ -23,7 +26,7 @@ export class User extends Model<User, UserAtr> {
 
   @ApiProperty({ example: 'John', description: 'Firstname of the user' })
   @Column({ type: DataType.STRING, allowNull: false })
-  declare firstname: string;
+  declare firstname: string;  
 
   @ApiProperty({ example: 'Doe', description: 'Lastname of the user' })
   @Column({ type: DataType.STRING, allowNull: false })

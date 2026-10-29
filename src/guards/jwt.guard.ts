@@ -33,11 +33,15 @@ export class JwtGuard implements CanActivate {
     
     // Check if user is blocked in DB
     const user = await this.userModel.findByPk(payload.user_id || payload.id);
-    if (user && user.is_blocked) {
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+    if (user.is_blocked) {
       throw new ForbiddenException('Akkount bloklangan');
     }
 
-    req.payload = payload;
+    // Admin huquqi bazadan — token 365 kun yashaydi, rol esa o'zgarishi mumkin
+    req.payload = { ...payload, is_admin: !!user.is_admin };
     return true;
   }
 

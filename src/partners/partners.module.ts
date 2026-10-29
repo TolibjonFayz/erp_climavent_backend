@@ -1,3 +1,4 @@
+import { User } from 'src/users/models/user.model';
 import { Module } from '@nestjs/common';
 import { PartnersService } from './partners.service';
 import { PartnersController } from './partners.controller';
@@ -6,7 +7,7 @@ import { Partners } from './models/partner.model';
 import { JwtModule } from '@nestjs/jwt';
 
 @Module({
-  imports: [SequelizeModule.forFeature([Partners]), JwtModule.register({})],
+  imports: [SequelizeModule.forFeature([Partners, User]), JwtModule.register({})],
   controllers: [PartnersController],
   providers: [PartnersService],
   exports: [PartnersService],

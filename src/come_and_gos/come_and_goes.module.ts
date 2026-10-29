@@ -1,3 +1,4 @@
+import { User } from 'src/users/models/user.model';
 import { Module } from '@nestjs/common';
 import { ComeAndGoesService } from './come_and_goes.service';
 import { ComeAndGoesController } from './come_and_goes.controller';
@@ -6,7 +7,7 @@ import { ComeAndGo } from './models/come_and_go.model';
 import { JwtModule } from '@nestjs/jwt';
 
 @Module({
-  imports: [SequelizeModule.forFeature([ComeAndGo]), JwtModule.register({})],
+  imports: [SequelizeModule.forFeature([ComeAndGo, User]), JwtModule.register({})],
   controllers: [ComeAndGoesController],
   providers: [ComeAndGoesService],
   exports: [ComeAndGoesService],

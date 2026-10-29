@@ -25,7 +25,8 @@ import { UserSelfOrAdminGuard } from 'src/guards/user_self_or_admin.guard';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  //Register user
+  //Register user — faqat admin yangi xodim qo'sha oladi (ochiq ro'yxatdan o'tish yo'q)
+  @UseGuards(AdminGuard)
   @ApiProperty({ description: 'Register user with username and password' })
   @Post('register')
   registerUser(
@@ -75,6 +76,12 @@ export class UsersController {
       if (updateUserDto.is_admin !== undefined || updateUserDto.is_blocked !== undefined) {
         throw new ForbiddenException("O'zingizni admin qilish, adminlikdan olish yoki bloklash mumkin emas!");
       }
+    }
+    // Parol faqat update-password orqali (u hash'laydi) — bu yerda ochiq matn bazaga tushardi
+    delete updateUserDto.password;
+    // Ruxsatlarni (shu jumladan permissions.boss) faqat admin o'zgartiradi
+    if (!req?.user?.is_admin && updateUserDto.permissions !== undefined) {
+      throw new ForbiddenException("Ruxsatlarni faqat admin o'zgartira oladi");
     }
     return this.usersService.updateUserById(id, updateUserDto);
   }

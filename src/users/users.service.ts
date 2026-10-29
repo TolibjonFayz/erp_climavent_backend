@@ -8,6 +8,7 @@ import * as bcrypt from 'bcrypt';
 import { Response } from 'express';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
+import { stripSecrets } from 'src/common/ownership';
 
 @Injectable()
 export class UsersService {
@@ -38,26 +39,11 @@ export class UsersService {
       refresh_token: '',
     });
 
-    //Generate tokens
-    const tokens = await this.getTokens(newUser);
-    const hashed_refresh_token = await bcrypt.hash(tokens.refreshToken, 7);
-    const updateUser = await this.UsersRepository.update(
-      { refresh_token: hashed_refresh_token },
-      { where: { id: newUser.id }, returning: true },
-    );
-
-    //Cookie setting
-    res.cookie('refresh_token', tokens.refreshToken, {
-      maxAge: 15 * 24 * 60 * 60 * 1000,
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    });
-
+    // Foydalanuvchini admin yaratadi — yangi odam uchun token/cookie berilmaydi,
+    // u o'zi login qiladi
     return {
       message: "Foydalanuvchi muvaffaqiyatli ro'yxatdan o'tdi",
-      user: newUser.dataValues,
-      tokens,
+      user: stripSecrets(newUser),
       status: res.statusCode,
     };
   }
@@ -65,7 +51,7 @@ export class UsersService {
   // Login user
   async loginUser(loginuserDto: LoginUserDto, res: Response) {
     //Is user exists?
-    let user = await this.UsersRepository.findOne({
+    let user = await this.UsersRepository.unscoped().findOne({
       where: { username: loginuserDto.username },
     });
     if (!user) {
@@ -115,7 +101,7 @@ export class UsersService {
 
     const response = {
       message: 'Verification code sent to user',
-      user: updateUser[1][0].dataValues,
+      user: stripSecrets(updateUser[1][0]),
       tokens,
     };
     return response;
@@ -152,7 +138,7 @@ export class UsersService {
       returning: true,
     });
     return {
-      updatedUser: updatedUser[1][0]?.dataValues || updatedUser[1][0],
+      updatedUser: stripSecrets(updatedUser[1][0]),
       message: 'User updated successfully',
     };
   }
@@ -171,7 +157,7 @@ export class UsersService {
       },
     );
     return {
-      updatedUser: updatedUser[1][0]?.dataValues || updatedUser[1][0],
+      updatedUser: stripSecrets(updatedUser[1][0]),
       message: 'User password updated successfully',
     };
   }

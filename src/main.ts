@@ -34,8 +34,11 @@ const start = async () => {
       .setVersion('1.0.0')
       .addTag('NestJS, Postgres, Sequelize')
       .build();
-    const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('/api/docs', app, document);
+    // API xaritasi ochiq internetda ko'rinmasin — kerak bo'lsa SWAGGER_ENABLED=true bilan yoqiladi
+    if (process.env.SWAGGER_ENABLED === 'true') {
+      const document = SwaggerModule.createDocument(app, config);
+      SwaggerModule.setup('/api/docs', app, document);
+    }
 
     app.use(cookieParser());
     app.useGlobalPipes(new ValidationPipe());

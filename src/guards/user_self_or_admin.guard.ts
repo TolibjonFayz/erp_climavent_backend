@@ -48,11 +48,14 @@ export class UserSelfOrAdminGuard implements CanActivate {
       throw new ForbiddenException('Akkount bloklangan');
     }
 
-    if (user.user_id != id && !user.is_admin) {
-      throw new UnauthorizedException('You do not have permission to access this user');
+    // Admin huquqi tokendan emas, bazadan — adminlikdan olingan odamning eski tokeni ishlamasin
+    const isAdmin = !!dbUser?.is_admin;
+    if (user.user_id != id && !isAdmin) {
+      // 403: frontend 401 da logout qiladi
+      throw new ForbiddenException('You do not have permission to access this user');
     }
 
-    req.user = user;
+    req.user = { ...user, is_admin: isAdmin };
     return true;
   }
 }

@@ -1,3 +1,5 @@
+import { User } from 'src/users/models/user.model';
+import { JwtModule } from '@nestjs/jwt';
 import { Module } from '@nestjs/common';
 import { AuditLogService } from './audit_log.service';
 import { AuditLogController } from './audit_log.controller';
@@ -5,7 +7,7 @@ import { SequelizeModule } from '@nestjs/sequelize';
 import { AuditLog } from './models/audit_log.model';
 
 @Module({
-  imports: [SequelizeModule.forFeature([AuditLog])],
+  imports: [JwtModule.register({}), SequelizeModule.forFeature([AuditLog, User])],
   controllers: [AuditLogController],
   providers: [AuditLogService],
   exports: [AuditLogService],

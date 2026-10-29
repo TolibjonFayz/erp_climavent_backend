@@ -6,15 +6,18 @@ import {
   Param,
   Delete,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { AdminGuard } from 'src/guards/admin.guard';
 import { AuditLogService } from './audit_log.service';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { QueryAuditLogDto } from './dto/query-audit_log.dto';
 import { CreateAuditLogDto } from './dto/create-audit_log.dto';
 
 @ApiTags('Audit Logs')
+// Audit jurnalini faqat admin panel yozadi va o'qiydi
+@UseGuards(AdminGuard)
 @Controller('audit-logs')
-// @UseGuards(JwtAuthGuard, AdminGuard) // ← guardlaringizni yoqing
 export class AuditLogController {
   constructor(private readonly auditLogService: AuditLogService) {}
 

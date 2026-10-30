@@ -12,11 +12,16 @@ type ClientInfo = { userAgent?: string; ip?: string; origin?: string };
 type RefreshPayload = { user_id: number; is_admin?: boolean; sid?: number; exp?: number };
 
 const sha256 = (token: string) => createHash('sha256').update(token).digest('hex');
+// Har so'rovda bazaga bormaslik uchun sessiya holati shuncha vaqt eslab turiladi.
+// Shu jarayonda yopilgan sessiya keshdan darhol o'chiriladi — chiqish/bloklash darhol ishlaydi.
+const ACTIVE_CACHE_MS = 30_000;
 
 // Qurilma bo'yicha sessiyalar: login yangi sessiya ochadi, refresh tokenni aylantiradi
 // (eskisi qayta ishlatilsa — sessiya bekor), logout va parol o'zgarishi sessiyalarni yopadi.
 @Injectable()
 export class SessionsService {
+  private readonly activeCache = new Map<number, { active: boolean; at: number }>();
+
   constructor(
     @InjectModel(UserSession) private readonly sessions: typeof UserSession,
     @InjectModel(User) private readonly users: typeof User,
@@ -50,6 +55,7 @@ export class SessionsService {
     if (session.token_hash !== sha256(refreshToken)) {
       // Allaqachon almashtirilgan token qayta keldi — o'g'irlangan bo'lishi mumkin
       await session.update({ revoked_at: new Date() });
+      this.activeCache.delete(session.id);
       throw new UnauthorizedException('Session ended');
     }
     if (client.ip) session.ip = client.ip.slice(0, 64);
@@ -70,6 +76,7 @@ export class SessionsService {
       await this.activity.record({ user_id: payload.user_id, action: 'logout', module: 'users', client });
     }
     if (payload?.sid) {
+      this.activeCache.delete(payload.sid);
       await this.sessions.update(
         { revoked_at: new Date() },
         { where: { id: payload.sid, token_hash: sha256(refreshToken), revoked_at: null } },
@@ -80,6 +87,8 @@ export class SessionsService {
 
   // Parol almashganda yoki bloklanganda — boshqa qurilmalardagi sessiyalar yopiladi
   async revokeAll(userId: number, exceptSid?: number) {
+    // Qaysi sid'lar shu userniki ekanini keshda bilmaymiz — butunlay tozalaymiz (kamdan-kam bo'ladi)
+    this.activeCache.clear();
     await this.sessions.update(
       { revoked_at: new Date() },
       {
@@ -90,6 +99,18 @@ export class SessionsService {
         },
       },
     );
+  }
+
+  // Access token'dagi sessiya hali ochiqmi (chiqilmagan, bloklanmagan, parol almashmagan)
+  async isActive(sid: number): Promise<boolean> {
+    const now = Date.now();
+    const hit = this.activeCache.get(sid);
+    if (hit && now - hit.at < ACTIVE_CACHE_MS) return hit.active;
+    const session = await this.sessions.findByPk(sid, { attributes: ['id', 'revoked_at'] });
+    const active = !!session && !session.revoked_at;
+    if (this.activeCache.size > 5000) this.activeCache.clear();
+    this.activeCache.set(sid, { active, at: now });
+    return active;
   }
 
   // Sessiyalardan oldingi tokenlar (sid yo'q): users.refresh_token bilan mos kelsa — sessiyaga o'tkazamiz

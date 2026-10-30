@@ -9,7 +9,10 @@ import {
   Req,
   UseGuards,
   ForbiddenException,
+  Delete,
+  ParseIntPipe,
 } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginUserDto } from './dto/login-user.dto';
@@ -34,6 +37,7 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly sessions: SessionsService,
+    private readonly jwt: JwtService,
   ) {}
 
   //Register user — faqat admin yangi xodim qo'sha oladi (ochiq ro'yxatdan o'tish yo'q)
@@ -113,6 +117,23 @@ export class UsersController {
     // Bloklangan xodimning barcha qurilmalardagi sessiyalari yopiladi
     if (updateUserDto.is_blocked === true) await this.sessions.revokeAll(Number(id));
     return result;
+  }
+
+  //Delete user — faqat admin, o'zini emas; ish ma'lumoti bo'lsa 409 (bloklash taklif qilinadi)
+  @UseGuards(AdminGuard)
+  @ApiProperty({ description: 'Delete a user without business records' })
+  @Delete('delete/:id')
+  deleteUser(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const actor = this.actorId(req);
+    if (actor === id) throw new ForbiddenException("O'zingizni o'chira olmaysiz");
+    return this.usersService.deleteUserById(id);
+  }
+
+  // AdminGuard req.payload qo'ymaydi — token'dan o'qiymiz
+  private actorId(req: any): number | null {
+    const token = String(req?.headers?.authorization || '').split(' ')[1];
+    const payload = token ? (this.jwt.decode(token) as { user_id?: number } | null) : null;
+    return payload?.user_id ?? null;
   }
 
   //Update user password by id

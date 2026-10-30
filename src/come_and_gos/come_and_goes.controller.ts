@@ -8,6 +8,8 @@ import {
   UseGuards,
   Req,
   NotFoundException,
+  Delete,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { ComeAndGoesService } from './come_and_goes.service';
 import { CreateComeAndGoDto } from './dto/create-come_and_go.dto';
@@ -69,5 +71,13 @@ export class ComeAndGoesController {
     await this.assertAccess(id, req);
     if (!req.payload.is_admin) delete (updateComeAndGoDto as any).user_id;
     return this.comeAndGoesService.updateComeAndGo(id, updateComeAndGoDto);
+  }
+
+  //Delete come and go — tashriflari va videolari bilan birga (egasi yoki admin)
+  @ApiProperty({ description: 'Delete a come and go with its visits and videos' })
+  @Delete('delete/:id')
+  async removeOne(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    await this.assertAccess(id, req);
+    return this.comeAndGoesService.removeComeAndGo(id);
   }
 }

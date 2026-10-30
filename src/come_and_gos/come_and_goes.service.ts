@@ -3,6 +3,8 @@ import { UpdateComeAndGoDto } from './dto/update-come_and_go.dto';
 import { ComeAndGo } from './models/come_and_go.model';
 import { InjectModel } from '@nestjs/sequelize';
 import { Injectable } from '@nestjs/common';
+import { ComeAndGoInside } from 'src/come_and_go_inside/models/come_and_go_inside.model';
+import { LocationVideo } from 'src/location_videos/models/location_video.model';
 
 @Injectable()
 export class ComeAndGoesService {
@@ -10,6 +12,17 @@ export class ComeAndGoesService {
     @InjectModel(ComeAndGo)
     private readonly ComeAndGoRepository: typeof ComeAndGo,
   ) {}
+  // Obyekt yozuvi tashriflari va videolari bilan bitta tranzaksiyada o'chadi
+  async removeComeAndGo(id: number) {
+    const sequelize = this.ComeAndGoRepository.sequelize!;
+    await sequelize.transaction(async (transaction) => {
+      await LocationVideo.destroy({ where: { comeandgo_id: id }, transaction });
+      await ComeAndGoInside.destroy({ where: { come_and_go_father_id: id }, transaction });
+      await this.ComeAndGoRepository.destroy({ where: { id }, transaction });
+    });
+    return { deleted: true };
+  }
+
   async createComeAndGo(
     createComeAndGoDto: CreateComeAndGoDto,
   ): Promise<{ message: string; newCGO: ComeAndGo }> {

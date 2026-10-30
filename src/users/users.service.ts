@@ -1,7 +1,13 @@
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginUserDto } from './dto/login-user.dto';
 import { InjectModel } from '@nestjs/sequelize';
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { QueryTypes } from 'sequelize';
 import { User } from './models/user.model';
 import * as bcrypt from 'bcrypt';
 import { SessionsService } from './sessions.service';
@@ -132,6 +138,38 @@ export class UsersService {
       updatedUser: stripSecrets(updatedUser[1][0]),
       message: 'User updated successfully',
     };
+  }
+
+  // Foydalanuvchini butunlay o'chirish. Ish ma'lumoti (mijoz, obyekt, KP, shartnoma, loyiha,
+  // vazifa, davomat) bo'lsa — o'chirmaymiz: FK'lar SET NULL bo'lib, yozuvlar egasiz qolardi.
+  // Bunday xodim bloklanadi. Sinov akkauntlari kabi bo'sh foydalanuvchilar o'chadi.
+  async deleteUserById(id: number) {
+    const user = await this.UsersRepository.findByPk(id);
+    if (!user) throw new NotFoundException('Foydalanuvchi topilmadi');
+    const checks: [string, string][] = [
+      ['mijoz', 'SELECT count(*) FROM partners WHERE user_id = :id'],
+      ['obyekt', 'SELECT count(*) FROM comeandgo WHERE user_id = :id'],
+      ['KP', 'SELECT count(*) FROM kp WHERE created_by = :id'],
+      ['shartnoma', 'SELECT count(*) FROM dogovor WHERE created_by = :id'],
+      ['loyiha', 'SELECT count(*) FROM loyiha WHERE created_by = :id'],
+      ['vazifa', 'SELECT count(*) FROM tasks WHERE assigned_to = :id OR created_by = :id'],
+      ['davomat', 'SELECT count(*) FROM attendance WHERE user_id = :id'],
+    ];
+    const used: string[] = [];
+    for (const [label, sql] of checks) {
+      const [row] = await this.UsersRepository.sequelize!.query<{ count: string }>(sql, {
+        replacements: { id },
+        type: QueryTypes.SELECT,
+      });
+      if (Number(row?.count) > 0) used.push(`${row.count} ta ${label}`);
+    }
+    if (used.length) {
+      throw new ConflictException(
+        `Foydalanuvchida ish ma'lumotlari bor (${used.join(', ')}). O'chirish o'rniga bloklang.`,
+      );
+    }
+    await user.destroy();
+    return { deleted: true };
   }
 
   // Joriy parolni tekshirish. 400 (401 emas): frontend 401 da tizimdan chiqaradi

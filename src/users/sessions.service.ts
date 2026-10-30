@@ -6,8 +6,9 @@ import { createHash, randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { User } from './models/user.model';
 import { UserSession } from './models/user-session.model';
+import { ActivityService } from 'src/activity/activity.service';
 
-type ClientInfo = { userAgent?: string; ip?: string };
+type ClientInfo = { userAgent?: string; ip?: string; origin?: string };
 type RefreshPayload = { user_id: number; is_admin?: boolean; sid?: number; exp?: number };
 
 const sha256 = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -20,6 +21,7 @@ export class SessionsService {
     @InjectModel(UserSession) private readonly sessions: typeof UserSession,
     @InjectModel(User) private readonly users: typeof User,
     private readonly jwt: JwtService,
+    private readonly activity: ActivityService,
   ) {}
 
   async issue(user: User, client: ClientInfo) {
@@ -54,7 +56,7 @@ export class SessionsService {
     return this.rotate(session, user);
   }
 
-  async logout(refreshToken: string) {
+  async logout(refreshToken: string, client: ClientInfo = {}) {
     let payload: RefreshPayload;
     try {
       payload = this.jwt.verify(refreshToken, {
@@ -63,6 +65,9 @@ export class SessionsService {
       });
     } catch {
       return { ok: true };
+    }
+    if (payload?.user_id) {
+      await this.activity.record({ user_id: payload.user_id, action: 'logout', module: 'users', client });
     }
     if (payload?.sid) {
       await this.sessions.update(

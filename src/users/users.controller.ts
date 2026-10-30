@@ -30,6 +30,7 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 const clientInfo = (req: any) => ({
   userAgent: String(req?.headers?.['user-agent'] || ''),
   ip: String(req?.ip || ''),
+  origin: String(req?.headers?.origin || ''),
 });
 
 @Controller('users')
@@ -72,8 +73,8 @@ export class UsersController {
   //Logout — shu qurilma sessiyasini serverda yopadi
   @ApiProperty({ description: 'Revoke the session of this refresh token' })
   @Post('logout')
-  logout(@Body() body: RefreshTokenDto) {
-    return this.sessions.logout(body.refreshToken);
+  logout(@Body() body: RefreshTokenDto, @Req() req: any) {
+    return this.sessions.logout(body.refreshToken, clientInfo(req));
   }
 
   //Get user by id

@@ -22,6 +22,7 @@ import { DevicesModule } from './devices/devices.module';
 import { AppReleasesModule } from './app_releases/app-releases.module';
 import { SkladModule } from './sklad/sklad.module';
 import { TrainingModule } from './training/training.module';
+import { ActivityModule } from './activity/activity.module';
 
 @Module({
   imports: [
@@ -70,6 +71,7 @@ import { TrainingModule } from './training/training.module';
     AppReleasesModule,
     SkladModule,
     TrainingModule,
+    ActivityModule,
   ],
   controllers: [],
   providers: [

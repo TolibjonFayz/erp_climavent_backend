@@ -73,4 +73,9 @@ export class User extends Model<User, UserAtr> {
   @ApiProperty({ example: { "loyiha": true }, description: 'Permissions' })
   @Column({ type: DataType.JSONB, allowNull: true, defaultValue: {} })
   declare permissions: any;
+
+  // Oxirgi marta qachon tizimda bo'lgan (har so'rovda, daqiqasiga bir marta yangilanadi)
+  @ApiProperty({ example: '2026-10-30T09:15:00Z', description: 'Last activity time' })
+  @Column({ type: DataType.DATE, allowNull: true })
+  declare last_seen_at: Date | null;
 }

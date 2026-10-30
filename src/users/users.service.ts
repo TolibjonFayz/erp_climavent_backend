@@ -15,12 +15,14 @@ import { Response } from 'express';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
 import { stripSecrets } from 'src/common/ownership';
+import { ActivityService, ClientInfo } from 'src/activity/activity.service';
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectModel(User) private readonly UsersRepository: typeof User,
     private readonly sessions: SessionsService,
+    private readonly activity: ActivityService,
   ) {}
   // Register user
   async registerUser(createUserDto: CreateUserDto, res: Response) {
@@ -58,13 +60,25 @@ export class UsersService {
   async loginUser(
     loginuserDto: LoginUserDto,
     res: Response,
-    client: { userAgent?: string; ip?: string } = {},
+    client: ClientInfo = {},
   ) {
+    // Har bir kirish urinishi jurnalga: muvaffaqiyatli, xato parol, bloklangan, noma'lum login
+    const audit = (action: string, userId: number | null, error?: string) =>
+      this.activity.record({
+        user_id: userId,
+        action,
+        module: 'users',
+        ok: action === 'login',
+        error: error ?? null,
+        payload: { username: String(loginuserDto.username || '').slice(0, 100) },
+        client,
+      });
     //Is user exists?
     let user = await this.UsersRepository.unscoped().findOne({
       where: { username: loginuserDto.username },
     });
     if (!user) {
+      await audit('login_failed', null, "Bunday login yo'q");
       return res.status(404).json({
         message: 'Foydalanuvchi nomi yoki maxfiy parol xato kiritildi',
         messageRu: 'Неверно введено имя пользователя или пароль',
@@ -73,6 +87,7 @@ export class UsersService {
     }
     
     if (user.dataValues.is_blocked) {
+      await audit('login_blocked', user.id, 'Akkount bloklangan');
       return res.status(403).json({
         message: 'Akkount bloklangan',
         messageRu: 'Аккаунт заблокирован',
@@ -86,6 +101,7 @@ export class UsersService {
       user.dataValues.password,
     );
     if (!isPasswordValid) {
+      await audit('login_failed', user.id, "Parol noto'g'ri");
       return res.status(401).json({
         message: "Kiritilgan parol noto'gri",
         messageRu: 'Неверно введён пароль',
@@ -95,6 +111,7 @@ export class UsersService {
 
     // Har bir login — alohida qurilma sessiyasi (sayt va telefon bir-birini chiqarmaydi)
     const tokens = await this.sessions.issue(user, client);
+    await audit('login', user.id);
 
     const response = {
       message: 'Verification code sent to user',

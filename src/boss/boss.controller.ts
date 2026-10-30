@@ -16,12 +16,23 @@ import {
   PromoteDto,
 } from './dto/boss.dto';
 import { BossGuard } from 'src/guards/boss.guard';
+import { BossSalesService, SALES_PERIODS, SalesPeriod } from './boss-sales.service';
 
 // Direktor yoki admin "boss" ruxsatini bergan xodimlar uchun (BossGuard)
 @UseGuards(BossGuard)
 @Controller('boss')
 export class BossController {
-  constructor(private readonly bossService: BossService) {}
+  constructor(
+    private readonly bossService: BossService,
+    private readonly salesService: BossSalesService,
+  ) {}
+
+  // ─── Savdo: KP, shartnomalar, menejerlar konversiyasi, mijozlar, raqiblar ───
+  @Get('sales')
+  sales(@Query('period') period?: string) {
+    const p = (SALES_PERIODS as readonly string[]).includes(period ?? '') ? (period as SalesPeriod) : 'year';
+    return this.salesService.overview(p);
+  }
 
   // ─── Targets ───
   @Post('targets')

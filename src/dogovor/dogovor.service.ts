@@ -211,7 +211,35 @@ export class DogovorService {
       stats.total += count;
       stats.sum += sum;
     }
-    return { rows, total: count, stats };
+    return { rows, total: count, stats: { ...stats, month: await this.monthTrend(payload) } };
+  }
+
+  /**
+   * Oy dinamikasi: shu oyning 1-sanasidan bugungacha va o'tgan oyning xuddi shu davri
+   * (soni va summasi, shartnoma sanasi bo'yicha) — kartalardagi "o'tgan oyga nisbatan" uchun.
+   */
+  private async monthTrend(payload: AuthPayload) {
+    const now = new Date();
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const day = now.getDate();
+    const curFrom = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
+    const curTo = new Date(Date.UTC(now.getFullYear(), now.getMonth(), day));
+    const prevFrom = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, 1));
+    const prevLast = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 0)).getUTCDate();
+    const prevTo = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, Math.min(day, prevLast)));
+    const period = async (from: Date, to: Date) => {
+      const row = (await this.dogovorRepository.findOne({
+        where: { ...this.scope(payload), dogovor_date: { [Op.between]: [iso(from), iso(to)] } },
+        attributes: [
+          [Sequelize.fn('COUNT', Sequelize.col('id')), 'count'],
+          [Sequelize.fn('COALESCE', Sequelize.fn('SUM', Sequelize.col('dogovor_sum')), 0), 'sum'],
+        ],
+        raw: true,
+      })) as unknown as { count: string; sum: string } | null;
+      return { count: Number(row?.count) || 0, sum: Number(row?.sum) || 0 };
+    };
+    const [current, previous] = await Promise.all([period(curFrom, curTo), period(prevFrom, prevTo)]);
+    return { current, previous };
   }
 
   /** Excel eksport: filtrga mos barcha shartnomalar (bo'laksiz) */

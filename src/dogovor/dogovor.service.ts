@@ -5,13 +5,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
-import { Op } from 'sequelize';
+import { Op, Sequelize } from 'sequelize';
 import * as XLSX from 'xlsx';
 import { User } from 'src/users/models/user.model';
 import { CreateDogovorDto } from './dto/create-dogovor.dto';
 import { UpdateDogovorDto } from './dto/update-dogovor.dto';
 import { ImportResultDto } from './dto/import-result.dto';
 import { Dogovor } from './models/dogovor.model';
+import {
+  buildDogovorSearch,
+  buildDogovorWhere,
+  DogovorListQuery,
+  pageParams,
+} from './dogovor-query';
 
 export interface AuthPayload {
   user_id: number;
@@ -164,6 +170,67 @@ export class DogovorService {
       where,
       include: creatorInclude,
       order: [['dogovor_number', 'DESC NULLS LAST']],
+    });
+  }
+
+  private scope(payload: AuthPayload) {
+    return payload.is_admin ? {} : { created_by: payload.user_id };
+  }
+
+  /**
+   * Sahifadagi ro'yxat: filtrlangan bo'lak + jami soni + holatlar bo'yicha statistika.
+   * Statistika filtrga bog'liq emas (sahifa tepasidagi kartalar butun ro'yxat bo'yicha).
+   */
+  async findPage(payload: AuthPayload, q: DogovorListQuery) {
+    const where = buildDogovorWhere(q, this.scope(payload), payload.is_admin);
+    const { limit, offset } = pageParams(q);
+    const [{ rows, count }, byStatus] = await Promise.all([
+      this.dogovorRepository.findAndCountAll({
+        where,
+        include: creatorInclude,
+        order: [['dogovor_number', 'DESC NULLS LAST'], ['id', 'DESC']],
+        limit,
+        offset,
+      }),
+      this.dogovorRepository.findAll({
+        where: this.scope(payload),
+        attributes: [
+          'dogovor_status',
+          [Sequelize.fn('COUNT', Sequelize.col('id')), 'count'],
+          [Sequelize.fn('COALESCE', Sequelize.fn('SUM', Sequelize.col('dogovor_sum')), 0), 'sum'],
+        ],
+        group: ['dogovor_status'],
+        raw: true,
+      }) as unknown as Promise<{ dogovor_status: string; count: string; sum: string }[]>,
+    ]);
+    const stats = { total: 0, sum: 0, byStatus: {} as Record<string, { count: number; sum: number }> };
+    for (const s of byStatus) {
+      const count = Number(s.count) || 0;
+      const sum = Number(s.sum) || 0;
+      stats.byStatus[s.dogovor_status] = { count, sum };
+      stats.total += count;
+      stats.sum += sum;
+    }
+    return { rows, total: count, stats };
+  }
+
+  /** Excel eksport: filtrga mos barcha shartnomalar (bo'laksiz) */
+  async findFiltered(payload: AuthPayload, q: DogovorListQuery) {
+    return this.dogovorRepository.findAll({
+      where: buildDogovorWhere(q, this.scope(payload), payload.is_admin),
+      order: [['dogovor_number', 'DESC NULLS LAST'], ['id', 'DESC']],
+    });
+  }
+
+  /** Umumiy qidiruv uchun eng mos bir nechta shartnoma */
+  async search(payload: AuthPayload, q: string, limit = 8) {
+    const text = String(q ?? '').trim();
+    if (!text) return [];
+    return this.dogovorRepository.findAll({
+      where: buildDogovorSearch(text, this.scope(payload)),
+      attributes: ['id', 'dogovor_number', 'dogovor_date', 'client_name', 'client_inn', 'client_phone', 'manager_name'],
+      order: [['dogovor_date', 'DESC NULLS LAST'], ['id', 'DESC']],
+      limit: Math.min(Math.max(Number(limit) || 8, 1), 20),
     });
   }
 

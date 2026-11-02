@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   Req,
   UploadedFile,
   UseGuards,
@@ -26,6 +27,7 @@ import { JwtGuard } from 'src/guards/jwt.guard';
 import { CreateDogovorDto } from './dto/create-dogovor.dto';
 import { UpdateDogovorDto } from './dto/update-dogovor.dto';
 import { AuthPayload, DogovorService } from './dogovor.service';
+import { DogovorListQuery } from './dogovor-query';
 
 interface RequestWithPayload {
   payload: AuthPayload;
@@ -73,6 +75,24 @@ export class DogovorController {
   @ApiResponse({ status: 200, description: 'Contracts fetched successfully' })
   findAll(@Req() req: RequestWithPayload) {
     return this.dogovorService.findAll(req.payload);
+  }
+
+  @Get('page')
+  @ApiOperation({ summary: "Contracts page: filtered slice + total + status stats (page, limit, filters)" })
+  findPage(@Req() req: RequestWithPayload, @Query() query: DogovorListQuery) {
+    return this.dogovorService.findPage(req.payload, query);
+  }
+
+  @Get('export')
+  @ApiOperation({ summary: 'All contracts matching the filters (for Excel export)' })
+  findFiltered(@Req() req: RequestWithPayload, @Query() query: DogovorListQuery) {
+    return this.dogovorService.findFiltered(req.payload, query);
+  }
+
+  @Get('search')
+  @ApiOperation({ summary: 'Global search: a few contracts matching every word' })
+  search(@Req() req: RequestWithPayload, @Query('q') q: string) {
+    return this.dogovorService.search(req.payload, q);
   }
 
   @Get('one/:id')

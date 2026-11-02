@@ -18,6 +18,8 @@ export interface DogovorListQuery {
   phone?: string;
   comment?: string;
   adminComment?: string;
+  /** Umumiy qidiruv (mobil ilova): har bir so'z raqam/mijoz/INN/telefon/menejer/izohdan birida */
+  q?: string;
 }
 
 const STATUSES = ['Open', 'Shipped', 'PartlyShipped', 'Closed'];
@@ -51,13 +53,18 @@ export function buildDogovorWhere(
   contains(col('comment'), q.comment);
   if (isAdmin) contains(col('admin_comment'), q.adminComment);
   if (STATUSES.includes(text(q.status))) and.push({ dogovor_status: text(q.status) });
+  if (text(q.q)) and.push(searchWords(text(q.q)));
   return { [Op.and]: and } as WhereOptions;
 }
 
 /** Umumiy qidiruv (Ctrl+K): har bir so'z raqam, mijoz, INN, telefon yoki menejerdan birida bo'lsin */
 export function buildDogovorSearch(q: string, scope: WhereOptions): WhereOptions {
+  return { [Op.and]: [scope, searchWords(q)] } as WhereOptions;
+}
+
+function searchWords(q: string): WhereOptions {
   const words = q.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
-  const and: unknown[] = [scope];
+  const and: unknown[] = [];
   for (const w of words) {
     const or: unknown[] = [
       Sequelize.where(asText('dogovor_number'), { [Op.iLike]: like(w) }),
@@ -65,6 +72,7 @@ export function buildDogovorSearch(q: string, scope: WhereOptions): WhereOptions
       { client_inn: { [Op.iLike]: like(w) } },
       { client_phone: { [Op.iLike]: like(w) } },
       { manager_name: { [Op.iLike]: like(w) } },
+      { comment: { [Op.iLike]: like(w) } },
     ];
     // Telefon belgilarsiz ham topilsin: "901234567" → "+998 (90) 123-45-67"
     if (/^\d{3,}$/.test(w)) {

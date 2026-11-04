@@ -21,6 +21,7 @@ import { AmocrmModule } from './amocrm/amocrm.module';
 import { DevicesModule } from './devices/devices.module';
 import { AppReleasesModule } from './app_releases/app-releases.module';
 import { SkladModule } from './sklad/sklad.module';
+import { OtgruzkaModule } from './otgruzka/otgruzka.module';
 import { TrainingModule } from './training/training.module';
 import { ActivityModule } from './activity/activity.module';
 
@@ -70,6 +71,7 @@ import { ActivityModule } from './activity/activity.module';
     DevicesModule,
     AppReleasesModule,
     SkladModule,
+    OtgruzkaModule,
     TrainingModule,
     ActivityModule,
   ],

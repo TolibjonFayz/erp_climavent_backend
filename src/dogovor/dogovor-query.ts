@@ -42,7 +42,16 @@ export function buildDogovorWhere(
     if (s) and.push(Sequelize.where(expr as never, { [Op.iLike]: like(s) }));
   };
   contains(asText('dogovor_number'), q.number);
-  contains(col('client_name'), q.client);
+  // "Mijoz" maydoni shartnoma raqami bo'yicha ham topadi
+  const client = text(q.client);
+  if (client) {
+    and.push({
+      [Op.or]: [
+        { client_name: { [Op.iLike]: like(client) } },
+        Sequelize.where(asText('dogovor_number'), { [Op.iLike]: like(client) }),
+      ],
+    });
+  }
   contains(col('manager_name'), q.manager);
   contains(asDate('dogovor_date'), q.date);
   contains(asDate('payment_date'), q.paymentDate);

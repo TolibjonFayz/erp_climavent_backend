@@ -24,5 +24,6 @@ import { TrainingModule } from 'src/training/training.module';
   ],
   controllers: [SkladController],
   providers: [SkladService],
+  exports: [SkladService],
 })
 export class SkladModule {}

@@ -101,6 +101,24 @@ export class OtgruzkaController {
     return this.service.detail(id);
   }
 
+  @Get('one/:id/stock')
+  @ApiOperation({ summary: "Karta mahsulotlari: omborda nechtasi tayyor" })
+  stock(@Param('id', ParseIntPipe) id: number) {
+    return this.service.stock(id);
+  }
+
+  @Get('readiness')
+  @ApiOperation({ summary: "Jo'natilmagan kartalar mahsulotlari bo'yicha ombor tayyorligi" })
+  readiness() {
+    return this.service.readiness();
+  }
+
+  @Get('managers')
+  @ApiOperation({ summary: "Menejerlar ro'yxati (tanlash uchun)" })
+  managers() {
+    return this.service.managers();
+  }
+
   @Post('create')
   @ApiOperation({ summary: "Yangi karta (faqat ERP asosiy rejimda)" })
   create(@Body() dto: CreateOrderDto, @Req() req: RequestWithPayload) {

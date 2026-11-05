@@ -23,6 +23,14 @@ export type OtgruzkaSeries = 'cv_official' | 'cv_unofficial' | 'jv_official' | '
 export const FINAL_STATUSES = ['refused', 'returned', 'stopped', 'stock'] as const;
 export type FinalStatus = (typeof FINAL_STATUSES)[number];
 
+// Shartnomadagi mahsulot qatori (ERP'da yuritiladi, jadvalga yozilmaydi)
+export interface OtgruzkaItem {
+  name: string;
+  unit?: string | null;
+  qty: number;
+  price: number;
+}
+
 export interface OtgruzkaOrderAtr {
   sheet_key?: string | null;
   sheet_row?: number | null;
@@ -56,6 +64,7 @@ export interface OtgruzkaOrderAtr {
   shipped_at?: Date | null;
   paid_at?: Date | null;
   erp_written_at?: Date | null;
+  items?: OtgruzkaItem[] | null;
   created_by?: number | null;
 }
 
@@ -176,6 +185,10 @@ export class OtgruzkaOrder extends Model<OtgruzkaOrder, OtgruzkaOrderAtr> {
   // ma'lumot berishi mumkin — shu oraliqda sinxron bu qatorni "qaytarib" yubormasin.
   @Column({ type: DataType.DATE, allowNull: true })
   declare erp_written_at: Date | null;
+
+  // Mahsulotlar (nom, soni, narxi) — ERP shartnomasidan yoki PDF'dan; jadvalda bunday ustun yo'q
+  @Column({ type: DataType.JSONB, allowNull: true })
+  declare items: OtgruzkaItem[] | null;
 
   @ForeignKey(() => User)
   @Column({ type: DataType.INTEGER, allowNull: true })

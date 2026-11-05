@@ -1,5 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
+  ValidateNested,
   IsBoolean,
   IsDateString,
   IsIn,
@@ -23,8 +27,30 @@ export class OtgruzkaSettingsDto {
   mode: 'mirror' | 'live';
 }
 
-// Mirror rejimda faqat `next_action*` qabul qilinadi; qolganlari — live rejimda
+export class OrderItemDto {
+  @ApiProperty() @IsString() @IsNotEmpty() @MaxLength(500)
+  name: string = '';
+
+  @ApiPropertyOptional() @IsOptional() @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(32)
+  unit?: string | null;
+
+  @ApiProperty() @IsNumber() @Min(0)
+  qty: number = 0;
+
+  @ApiProperty() @IsNumber() @Min(0)
+  price: number = 0;
+}
+
+// Mirror rejimda faqat `next_action*` va `items` qabul qilinadi; qolganlari — jadval bilan birga
 export class UpdateOrderDto {
+  @ApiPropertyOptional({ type: [OrderItemDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(300)
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemDto)
+  items?: OrderItemDto[];
+
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(2000)
   next_action?: string | null;
 

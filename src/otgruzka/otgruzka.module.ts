@@ -3,6 +3,7 @@ import { SequelizeModule } from '@nestjs/sequelize';
 import { JwtModule } from '@nestjs/jwt';
 import { User } from 'src/users/models/user.model';
 import { Dogovor } from 'src/dogovor/models/dogovor.model';
+import { SkladModule } from 'src/sklad/sklad.module';
 import { OtgruzkaController, OtgruzkaHookController } from './otgruzka.controller';
 import { OtgruzkaService } from './otgruzka.service';
 import { OtgruzkaOrder } from './models/otgruzka-order.model';
@@ -23,8 +24,10 @@ import { OtgruzkaSetting } from './models/otgruzka-setting.model';
       User,
     ]),
     JwtModule.register({}),
+    SkladModule,
   ],
   controllers: [OtgruzkaController, OtgruzkaHookController],
   providers: [OtgruzkaService],
+  exports: [OtgruzkaService],
 })
 export class OtgruzkaModule {}

@@ -22,7 +22,7 @@ import { MovementType, SkladMovement } from './models/sklad-movement.model';
 import { SkladSetting } from './models/sklad-setting.model';
 import { SkladSource } from './models/sklad-source.model';
 import { matchKey, matchTokens, parseSapWorkbook } from './sap-import';
-import { buildSapIndex, findFuzzy, nameSig } from './sap-match';
+import { buildSapIndex, compareSig, findFuzzy, nameSig } from './sap-match';
 import { TrainingService } from 'src/training/training.service';
 import {
   lastDayOf,
@@ -581,6 +581,64 @@ export class SkladService implements OnApplicationBootstrap {
     return this.contractRepo.findAll({
       include: [{ model: SkladItem, attributes: ['id', 'code', 'name', 'unit', 'sap_code', 'sap_name'] }],
       order: [['row_no', 'ASC NULLS LAST'], ['id', 'ASC']],
+    });
+  }
+
+  // ─── Shartnoma mahsulotlari uchun ombordagi qoldiq ─────────────────
+  /**
+   * Shartnomadagi mahsulot nomlarini ombor mahsulotlariga moslaydi va hozirgi qoldiqni beradi.
+   * Nomlar 1:1 bir xil bo'lmaydi: avval yozilish farqisiz kalit (ombor nomi yoki SAP nomi),
+   * keyin "aqlli" moslik (oila + barcha raqamlar teng) — ikkinchisi `approx: true`.
+   * `reserved` — "договора на складе" varag'ida shu shartnoma uchun omborga kelgan va hali jo'natilmagan soni.
+   */
+  async stockFor(queries: Array<{ name: string; dogovor_number?: string | null }>) {
+    const [items, balances, lines] = await Promise.all([
+      this.itemRepo.findAll({ attributes: ['id', 'name', 'sap_name', 'sap_code', 'unit', 'group_name'] }),
+      this.computePeriod('9999-12-31', '9999-12-31'),
+      this.contractRepo.findAll({
+        attributes: ['dogovor_number', 'item_name', 'item_id', 'qty_in', 'qty_out'],
+        where: { dogovor_number: { [Op.in]: [...new Set(queries.map((q) => q.dogovor_number).filter((n): n is string => !!n))] } },
+      }),
+    ]);
+    const byKey = new Map<string, SkladItem>();
+    for (const it of items) {
+      for (const n of [it.name, it.sap_name]) {
+        const k = n ? matchKey(n) : '';
+        if (k && !byKey.has(k)) byKey.set(k, it);
+      }
+    }
+    const sigs = items.map((it) => ({ it, sigs: [it.name, it.sap_name].filter(Boolean).map((n) => nameSig(n as string)) }));
+    const fuzzy = (name: string): SkladItem | null => {
+      const q = nameSig(name);
+      let best: { it: SkladItem; score: number } | null = null;
+      let tied = false;
+      for (const row of sigs) {
+        let s = -1;
+        for (const sig of row.sigs) s = Math.max(s, compareSig(sig, q)?.score ?? -1);
+        if (s < 70) continue;
+        if (!best || s > best.score) {
+          best = { it: row.it, score: s };
+          tied = false;
+        } else if (s === best.score) tied = true;
+      }
+      return best && !tied ? best.it : null;
+    };
+
+    return queries.map((q) => {
+      const key = matchKey(q.name);
+      const exact = byKey.get(key) ?? null;
+      const item = exact ?? fuzzy(q.name);
+      const reserved = lines
+        .filter((l) => l.dogovor_number === q.dogovor_number && ((item && l.item_id === item.id) || matchKey(l.item_name) === key))
+        .reduce((s, l) => s + Math.max(0, (Number(l.qty_in) || 0) - (Number(l.qty_out) || 0)), 0);
+      return {
+        item: item
+          ? { id: item.id, name: item.name, sap_name: item.sap_name, sap_code: item.sap_code, unit: item.unit, group_name: item.group_name }
+          : null,
+        approx: !!item && !exact,
+        balance: item ? (balances.get(item.id)?.closing ?? 0) : null,
+        reserved: r3(reserved),
+      };
     });
   }
 

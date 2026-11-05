@@ -11,11 +11,12 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { randomBytes, timingSafeEqual } from 'crypto';
-import { Op, Transaction } from 'sequelize';
+import { Op, QueryTypes, Transaction } from 'sequelize';
 import { Sequelize } from 'sequelize-typescript';
 import { User } from 'src/users/models/user.model';
 import { Dogovor } from 'src/dogovor/models/dogovor.model';
 import { SheetFormatError } from 'src/sklad/sheet-parser';
+import { SkladService } from 'src/sklad/sklad.service';
 import {
   CreateNoteDto,
   CreateOrderDto,
@@ -25,7 +26,7 @@ import {
 } from './dto/otgruzka.dto';
 import { OtgruzkaLine } from './models/otgruzka-line.model';
 import { OtgruzkaNote } from './models/otgruzka-note.model';
-import { OtgruzkaOrder, OtgruzkaOrderAtr } from './models/otgruzka-order.model';
+import { OtgruzkaItem, OtgruzkaOrder, OtgruzkaOrderAtr } from './models/otgruzka-order.model';
 import { OtgruzkaPayment } from './models/otgruzka-payment.model';
 import { OtgruzkaSetting } from './models/otgruzka-setting.model';
 import {
@@ -128,6 +129,11 @@ const same = (a: unknown, b: unknown) => {
   return (a ?? null) === (b ?? null);
 };
 const r2 = (n: number) => Math.round(n * 100) / 100;
+// Mahsulot qatorlari bir xil ko'rinishda (shartnoma va karta solishtirilganda farq faqat yozilishda bo'lmasin)
+const normItems = (list: Array<{ name?: string; unit?: string | null; qty?: number; price?: number }> | null | undefined): OtgruzkaItem[] =>
+  (list || [])
+    .filter((i) => i && String(i.name || '').trim())
+    .map((i) => ({ name: String(i.name).trim(), unit: i.unit ? String(i.unit).trim() : null, qty: Number(i.qty) || 0, price: Number(i.price) || 0 }));
 
 // ─── Hisoblanadigan holatlar ─────────────────────────────────────────
 export function payStatusOf(o: Pick<OtgruzkaOrder, 'contract_sum' | 'paid_sum'>) {
@@ -180,6 +186,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     @InjectModel(Dogovor) private readonly dogovorRepo: typeof Dogovor,
     @InjectModel(User) private readonly userRepo: typeof User,
     private readonly sequelize: Sequelize,
+    private readonly sklad: SkladService,
   ) {}
 
   // Mirror rejimda jadval har 5 daqiqada avtomatik o'qiladi (OTGRUZKA_SYNC_ENABLED=false — o'chiq)
@@ -187,6 +194,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     // sequelize sync mavjud jadvalga yangi ustun qo'shmaydi
     try {
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS erp_written_at TIMESTAMPTZ`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS items JSONB`);
     } catch (e: any) {
       this.logger.error(`otgruzka_orders ustuni qo'shilmadi: ${e?.message}`);
     }
@@ -791,7 +799,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
 
   async detail(id: number) {
     const o = await this.orderRepo.findByPk(id, {
-      include: [{ model: Dogovor, as: 'dogovor', attributes: ['id', 'dogovor_number', 'dogovor_date', 'client_name', 'dogovor_sum', 'dogovor_status'] }],
+      include: [{ model: Dogovor, as: 'dogovor', attributes: ['id', 'dogovor_number', 'dogovor_date', 'client_name', 'dogovor_sum', 'dogovor_status', 'items'] }],
     });
     if (!o) throw otError(NotFoundException, 'OT_NOT_FOUND', 'Yozuv topilmadi');
     const creator = { model: User, as: 'creator', attributes: ['id', 'firstname', 'lastname', 'username'] };
@@ -800,7 +808,15 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       this.noteRepo.findAll({ where: { order_id: id }, include: [creator], order: [['createdAt', 'DESC'], ['id', 'DESC']] }),
       this.lineRepo.findAll({ where: { order_id: id }, order: [['row_no', 'ASC']] }),
     ]);
-    return { ...this.view(o), payments, notes, lines };
+    // Kartada mahsulot yo'q bo'lsa — bog'langan ERP shartnomasidagilar ko'rsatiladi
+    const items = this.itemsOf(o as any);
+    const view = this.view(o);
+    // toJSON ichki modelning o'z dataValues'ini qaytaradi — nusxasiz o'chirish modelni buzadi
+    if (view.dogovor) {
+      const { items: _skip, ...dog } = view.dogovor;
+      view.dogovor = dog;
+    }
+    return { ...view, items, items_from_dogovor: !o.items?.length && items.length > 0, payments, notes, lines };
   }
 
   async lines() {
@@ -810,11 +826,188 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     });
   }
 
+  /** Menejerlar ro'yxati (tanlash uchun): kartalar va ERP shartnomalaridagi ismlar, ko'p uchraganlari tepada */
+  async managers() {
+    const rows = await this.sequelize.query<{ name: string; n: number }>(
+      `SELECT name, COUNT(*)::int AS n FROM (
+         SELECT TRIM(manager_name) AS name FROM otgruzka_orders WHERE manager_name IS NOT NULL
+         UNION ALL
+         SELECT TRIM(manager_name) FROM dogovor WHERE manager_name IS NOT NULL AND dogovor_date >= NOW() - INTERVAL '2 years'
+       ) t WHERE name <> '' GROUP BY name ORDER BY n DESC, name`,
+      { type: QueryTypes.SELECT },
+    );
+    // "Ilyosov M." va "Ilyosov M" kabi yozilish farqlari bitta bo'lib ko'rinsin
+    const seen = new Map<string, string>();
+    for (const r of rows) {
+      const k = r.name.toLowerCase().replace(/[.\s]+/g, ' ').trim();
+      if (!seen.has(k)) seen.set(k, r.name);
+    }
+    return [...seen.values()];
+  }
+
+  // ─── Mahsulotlar va ombordagi tayyorlik ────────────────────────────
+  private itemsOf(o: OtgruzkaOrder & { dogovor?: Dogovor | null }) {
+    if (o.items?.length) return o.items;
+    return (o.dogovor?.items || []).filter((i) => i?.name);
+  }
+
+  // Har mahsulot uchun: shartnoma bo'yicha omborga kelgani (reserved) + umumiy bo'sh qoldiq → tayyor soni
+  private async readinessOf(list: Array<{ order: OtgruzkaOrder; items: Array<{ name: string; qty: number }> }>) {
+    const queries = list.flatMap(({ order, items }) => items.map((i) => ({ name: i.name, dogovor_number: order.dogovor_number })));
+    const found = queries.length ? await this.sklad.stockFor(queries) : [];
+    let k = 0;
+    return list.map(({ items }) => {
+      const rows = items.map((i) => {
+        const st = found[k++];
+        const qty = Number(i.qty) || 0;
+        const avail = st.reserved + Math.max(0, st.balance ?? 0);
+        const ready = Math.min(qty, avail);
+        const status = !st.item && !st.reserved ? 'unknown' : ready >= qty && qty > 0 ? 'ready' : ready > 0 ? 'partial' : 'none';
+        return { ...st, qty, ready: Math.round(ready * 1000) / 1000, status };
+      });
+      const total = rows.reduce((s, r) => s + r.qty, 0);
+      const ready = rows.reduce((s, r) => s + r.ready, 0);
+      return {
+        rows,
+        summary: {
+          positions: rows.length,
+          ready_positions: rows.filter((r) => r.status === 'ready').length,
+          unknown: rows.filter((r) => r.status === 'unknown').length,
+          pct: total > 0 ? Math.round((ready / total) * 1000) / 1000 : 0,
+        },
+      };
+    });
+  }
+
+  /** Bitta karta mahsulotlari ombor qoldig'i bilan */
+  async stock(id: number) {
+    const o = await this.orderRepo.findByPk(id, { include: [{ model: Dogovor, as: 'dogovor', attributes: ['id', 'items'] }] });
+    if (!o) throw otError(NotFoundException, 'OT_NOT_FOUND', 'Yozuv topilmadi');
+    const items = this.itemsOf(o as any);
+    const [res] = await this.readinessOf([{ order: o, items }]);
+    return { items, ...res };
+  }
+
+  /**
+   * Ombor uchun: hali to'liq jo'natilmagan, mahsulotlari ma'lum kartalar va har biri bo'yicha
+   * qaysi mahsulotdan nechtasi omborda tayyor.
+   */
+  async readiness() {
+    const orders = await this.orderRepo.findAll({
+      where: { sheet_removed: false, final_status: null, shipped_pct: { [Op.lt]: 1 } },
+      include: [{ model: Dogovor, as: 'dogovor', attributes: ['id', 'items'] }],
+      order: [['dogovor_date', 'DESC NULLS LAST'], ['id', 'DESC']],
+    });
+    const list = orders
+      .map((order) => ({ order, items: this.itemsOf(order as any) }))
+      .filter((x) => x.items.length);
+    const res = await this.readinessOf(list);
+    return list.map(({ order, items }, i) => ({
+      id: order.id,
+      dogovor_number: order.dogovor_number,
+      dogovor_date: order.dogovor_date,
+      client_name: order.client_name,
+      manager_name: order.manager_name,
+      ready_pct: order.ready_pct,
+      shipped_pct: order.shipped_pct,
+      items,
+      ...res[i],
+    }));
+  }
+
+  // ─── ERP shartnomasidan avtomatik karta ────────────────────────────
+  /**
+   * "Dogovorlar" bo'limida yangi shartnoma kiritilganda chaqiriladi: otgruzkada karta ochiladi
+   * (tayyorlik/jo'natish 0%). Shu raqam + mijozli karta allaqachon bo'lsa (jadvalga oldin kiritilgan) —
+   * yangisi ochilmaydi, mavjudi shartnomaga bog'lanadi va mahsulotlari to'ldiriladi.
+   * Jadval ulangan bo'lsa unga ham qator qo'shiladi; jadvalga yozib bo'lmasa karta baribir ERP'da ochiladi.
+   */
+  async fromDogovor(d: Dogovor, userId: number | null) {
+    const number = d.dogovor_number != null ? String(d.dogovor_number) : null;
+    const items = normItems(d.items);
+    const ck = companyKey(d.client_name);
+    const same = number
+      ? (await this.orderRepo.findAll({ where: { dogovor_number: number } })).find(
+          (o) => o.dogovor_id === d.id || (ck && companyKey(o.client_name) === ck),
+        )
+      : await this.orderRepo.findOne({ where: { dogovor_id: d.id } });
+    if (same) {
+      await same.update({
+        // Karta allaqachon boshqa shartnomaga bog'langan bo'lsa — o'sha bog'lanish saqlanadi
+        dogovor_id: same.dogovor_id ?? d.id,
+        ...(!same.items?.length && items.length ? { items } : {}),
+        ...(!same.manager_name && d.manager_name ? { manager_name: d.manager_name } : {}),
+      });
+      return { id: same.id, created: false };
+    }
+
+    const base = {
+      dogovor_number: number,
+      dogovor_date: d.dogovor_date || null,
+      dogovor_id: d.id,
+      client_name: d.client_name,
+      client_inn: d.client_inn || null,
+      client_contact: d.contact_name || null,
+      client_phone: d.client_phone || null,
+      manager_name: d.manager_name || null,
+      contract_sum: Number(d.dogovor_sum) || 0,
+      ready_pct: 0,
+      shipped_pct: 0,
+      items: items.length ? items : null,
+      source: 'erp' as const,
+      series: seriesOf(number),
+      paid_sum: 0,
+      sheet_status: formulaStatus(0),
+      created_by: userId,
+    } as OtgruzkaOrderAtr;
+
+    let sheetMode: 'live' | 'sync' | null = null;
+    try {
+      sheetMode = await this.editMode();
+    } catch {
+      sheetMode = null; // jadval asosiy, skript ulanmagan — karta faqat ERP'da
+    }
+    let o: OtgruzkaOrder;
+    if (sheetMode === 'sync') {
+      try {
+        o = await this.withSheet('sync', () => this.pushOrder(null, base), (extra) => this.orderRepo.create({ ...base, ...extra }));
+      } catch (e: any) {
+        this.logger.warn(`Dogovor ${d.id}: jadvalga qator qo'shilmadi (${e?.message}) — karta faqat ERP'da ochildi`);
+        o = await this.orderRepo.create(base);
+      }
+    } else {
+      o = await this.orderRepo.create(base);
+    }
+    await this.noteRepo.create({
+      order_id: o.id,
+      kind: 'change',
+      data: { field: 'from_dogovor', dogovor_id: d.id },
+      source: 'erp',
+      created_by: userId,
+    } as any);
+    return { id: o.id, created: true };
+  }
+
+  /** Shartnoma mahsulotlari o'zgarsa — bog'langan kartada ham yangilanadi (karta mahsulotlari shartnomadan olingan bo'lsa) */
+  async dogovorItemsChanged(d: Dogovor, before: unknown) {
+    const items = normItems(d.items);
+    const prev = JSON.stringify(normItems(before as any));
+    if (JSON.stringify(items) === prev) return;
+    const orders = await this.orderRepo.findAll({ where: { dogovor_id: d.id } });
+    for (const o of orders) {
+      // Kartada mahsulotlar qo'lda o'zgartirilgan bo'lsa — tegilmaydi
+      if (!o.items?.length || JSON.stringify(normItems(o.items)) === prev) {
+        await o.update({ items: items.length ? items : null });
+      }
+    }
+  }
+
   // ─── O'zgartirish ───────────────────────────────────────────────────
   async create(dto: CreateOrderDto, payload: AuthPayload) {
     const mode = await this.editMode();
     const fields: Record<string, any> = {};
     for (const [k, v] of Object.entries(dto)) if (v !== undefined) fields[k] = typeof v === 'string' ? v.trim() || null : v;
+    if ('items' in fields) fields.items = normItems(fields.items).length ? normItems(fields.items) : null;
     const base = {
       ...fields,
       source: 'erp' as const,
@@ -836,8 +1029,8 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
   async update(id: number, dto: UpdateOrderDto, payload: AuthPayload) {
     const o = await this.findOrder(id);
     const keys = Object.keys(dto).filter((k) => (dto as any)[k] !== undefined);
-    const free = ['next_action', 'next_action_date'];
-    // Faqat ERP'dagi maydonlar (keyingi qadam) — jadvalga tegmaydi, har rejimda mumkin
+    const free = ['next_action', 'next_action_date', 'items'];
+    // Faqat ERP'dagi maydonlar (keyingi qadam, mahsulotlar) — jadvalga tegmaydi, har rejimda mumkin
     const mode = keys.some((k) => !free.includes(k)) ? await this.editMode() : 'live';
     if (dto.final_status && !(dto.final_reason ?? o.final_reason)?.trim()) {
       throw otError(BadRequestException, 'OT_REASON_REQUIRED', 'Yakuniy holat uchun sababini yozing');
@@ -848,6 +1041,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       patch[k] = typeof v === 'string' ? v.trim() || null : v;
     }
     if (patch.dogovor_number) patch.series = seriesOf(patch.dogovor_number);
+    if ('items' in patch) patch.items = normItems(patch.items).length ? normItems(patch.items) : null;
     const now = new Date();
     if (patch.ready_pct >= 1 && o.ready_pct < 1) patch.ready_at = now;
     if (patch.shipped_pct >= 1 && o.shipped_pct < 1) patch.shipped_at = now;

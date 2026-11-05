@@ -2,8 +2,10 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { OtgruzkaService } from 'src/otgruzka/otgruzka.service';
 import { InjectModel } from '@nestjs/sequelize';
 import { Op, Sequelize } from 'sequelize';
 import * as XLSX from 'xlsx';
@@ -115,8 +117,11 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 @Injectable()
 export class DogovorService {
+  private readonly logger = new Logger(DogovorService.name);
+
   constructor(
     @InjectModel(Dogovor) private readonly dogovorRepository: typeof Dogovor,
+    private readonly otgruzka: OtgruzkaService,
   ) {}
 
   // Admin — cheklovsiz. Boshqa foydalanuvchi — faqat o'zi kiritgan va
@@ -158,6 +163,12 @@ export class DogovorService {
       ...data,
       created_by: payload.user_id,
     } as any);
+    // Yangi shartnoma → Otgruzka'da kuzatuv kartasi (0%). Xato bo'lsa shartnoma saqlanaveradi.
+    try {
+      await this.otgruzka.fromDogovor(created, payload.user_id);
+    } catch (e: any) {
+      this.logger.warn(`Dogovor ${created.id}: otgruzka kartasi ochilmadi — ${e?.message}`);
+    }
     return this.findOne(created.id);
   }
 
@@ -287,7 +298,15 @@ export class DogovorService {
     const dogovor = await this.findOne(id);
     this.assertCanModify(dogovor, payload);
     const data = this.stripAdminOnlyFields(dto, payload);
+    const before = dogovor.items;
     await dogovor.update(data as any);
+    if ('items' in data) {
+      try {
+        await this.otgruzka.dogovorItemsChanged(dogovor, before);
+      } catch (e: any) {
+        this.logger.warn(`Dogovor ${id}: otgruzka mahsulotlari yangilanmadi — ${e?.message}`);
+      }
+    }
     return this.findOne(id);
   }
 

@@ -24,6 +24,7 @@ import { SkladModule } from './sklad/sklad.module';
 import { OtgruzkaModule } from './otgruzka/otgruzka.module';
 import { TrainingModule } from './training/training.module';
 import { ActivityModule } from './activity/activity.module';
+import { LeadsModule } from './leads/leads.module';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { ActivityModule } from './activity/activity.module';
     OtgruzkaModule,
     TrainingModule,
     ActivityModule,
+    LeadsModule,
   ],
   controllers: [],
   providers: [

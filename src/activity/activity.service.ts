@@ -36,7 +36,7 @@ type RecordInput = {
 const IGNORED_TABLES = new Set(['activity_logs', 'user_sessions', 'audit_logs', 'device_tokens']);
 // Bu so'rovlar jurnalga yozilmaydi: kirish/chiqish servislarda yoziladi, terminal agenti va
 // push tokeni ro'yxatdan o'tishi — foydalanuvchi amali emas
-const SKIP_PATH = /^(users\/(login|logout|refresh)|attendance\/hik|devices)(\/|$)/;
+const SKIP_PATH = /^(users\/(login|logout|refresh)|attendance\/hik|leads\/telegram\/webhook|devices)(\/|$)/;
 const TOUCH_EVERY_MS = 60_000;
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const TIMESTAMP_FIELDS = new Set(['createdAt', 'updatedAt']);

@@ -201,6 +201,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS erp_written_at TIMESTAMPTZ`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS items JSONB`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_check VARCHAR(16)`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_requested_at TIMESTAMPTZ`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_checked_at TIMESTAMPTZ`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_checked_by INTEGER`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_check_note TEXT`);
@@ -992,7 +993,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
         ...(!same.items?.length && items.length ? { items } : {}),
         ...(!same.manager_name && d.manager_name ? { manager_name: d.manager_name } : {}),
         // Yangi shartnoma — ombor mahsulotlar borligini tekshirsin
-        ...(same.shipped_pct < 1 && !same.final_status ? { sklad_check: 'pending' as const, sklad_checked_at: null, sklad_checked_by: null, sklad_check_note: null } : {}),
+        ...(same.shipped_pct < 1 && !same.final_status ? this.skladRequest() : {}),
       });
       await this.syncDogovorPayment(d, userId, same.id);
       return { id: same.id, created: false };
@@ -1018,7 +1019,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       series: seriesOf(number),
       paid_sum: 0,
       sheet_status: formulaStatus(0),
-      sklad_check: 'pending',
+      ...this.skladRequest(),
       created_by: userId,
     } as OtgruzkaOrderAtr;
 
@@ -1049,6 +1050,11 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     } as any);
     if (initial > EPS) await this.writeDogovorPayment(o.id, d, userId);
     return { id: o.id, created: true };
+  }
+
+  // Omborga tekshiruv so'rovi (yangi shartnoma yoki mahsulotlari o'zgardi)
+  private skladRequest() {
+    return { sklad_check: 'pending' as const, sklad_requested_at: new Date(), sklad_checked_at: null, sklad_checked_by: null, sklad_check_note: null };
   }
 
   // ─── Shartnomadagi to'lov → karta to'lovlari ───────────────────────
@@ -1148,7 +1154,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
         const recheck = items.length && o.shipped_pct < 1 && !o.final_status;
         await o.update({
           items: items.length ? items : null,
-          ...(recheck ? { sklad_check: 'pending' as const, sklad_checked_at: null, sklad_checked_by: null, sklad_check_note: null } : {}),
+          ...(recheck ? this.skladRequest() : {}),
         });
       }
     }
@@ -1364,6 +1370,8 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
   // ─── Didox: schyot-faktura fayllari (Cloudflare R2) ────────────────
   private static readonly DIDOX_MIME = /^(application\/pdf|image\/(png|jpe?g|webp|heic)|application\/(xml|json|zip|x-zip-compressed|vnd\.openxmlformats-officedocument\.[\w.]+|vnd\.ms-excel|msword)|text\/(xml|plain|csv))$/i;
 
+  private static readonly DIDOX_EXT = new Set(['pdf', 'png', 'jpg', 'jpeg', 'webp', 'heic', 'xml', 'json', 'zip', 'xls', 'xlsx', 'doc', 'docx', 'csv', 'txt']);
+
   private didoxFields(dto: DidoxFileDto) {
     const out: Record<string, unknown> = {};
     if (dto.amount !== undefined) {
@@ -1379,7 +1387,9 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
   async addDidoxFile(orderId: number, file: Express.Multer.File, dto: DidoxFileDto, payload: AuthPayload) {
     const o = await this.findOrder(orderId);
     if (!this.r2.isConfigured) throw otError(BadRequestException, 'OT_STORAGE_OFF', "Fayl saqlash (Cloudflare R2) sozlanmagan");
-    if (file.mimetype && !OtgruzkaService.DIDOX_MIME.test(file.mimetype)) {
+    // Ba'zi brauzerlar .xlsx/.heic/.xml uchun "application/octet-stream" yuboradi — kengaytma ham tekshiriladi
+    const ext = /\.([a-z0-9]{1,5})$/i.exec(file.originalname || '')?.[1]?.toLowerCase() || '';
+    if (!OtgruzkaService.DIDOX_EXT.has(ext) && !(file.mimetype && OtgruzkaService.DIDOX_MIME.test(file.mimetype))) {
       throw otError(BadRequestException, 'OT_DIDOX_TYPE', "Bu turdagi fayl qabul qilinmaydi (PDF, rasm, Excel, XML)");
     }
     // Multer fayl nomini latin1 sifatida beradi — kirill nomlar buzilmasin
@@ -1454,9 +1464,9 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
   /** Ombor tekshirishi kerak bo'lgan yangi shartnomalar (mahsulotlar va ombordagi holati bilan) */
   async skladChecks() {
     const orders = await this.orderRepo.findAll({
-      where: { sklad_check: 'pending', final_status: null },
+      where: { sklad_check: 'pending', final_status: null, shipped_pct: { [Op.lt]: 1 } },
       include: [{ model: Dogovor, as: 'dogovor', attributes: ['id', 'items'] }],
-      order: [['createdAt', 'DESC'], ['id', 'DESC']],
+      order: [['sklad_requested_at', 'DESC NULLS LAST'], ['id', 'DESC']],
     });
     const list = orders.map((order) => ({ order, items: this.itemsOf(order as any) }));
     const withItems = list.filter((x) => x.items.length);
@@ -1470,8 +1480,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       client_name: order.client_name,
       manager_name: order.manager_name,
       contract_sum: order.contract_sum,
-      created_at: order.createdAt,
-      updated_at: order.updatedAt,
+      requested_at: order.sklad_requested_at || order.createdAt,
       items,
       ...(byId.get(order.id) || { rows: [], summary: { positions: 0, ready_positions: 0, unknown: 0, pct: 0 } }),
     }));
@@ -1480,16 +1489,22 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
   /** Bildirishnoma uchun: soni va qisqa ro'yxat (har biri alohida o'qilgan deb belgilanadi) */
   async skladChecksCount() {
     const rows = await this.orderRepo.findAll({
-      where: { sklad_check: 'pending', final_status: null },
-      attributes: ['id', 'dogovor_number', 'client_name', 'manager_name', 'createdAt', 'updatedAt'],
-      order: [['updatedAt', 'DESC'], ['id', 'DESC']],
+      where: { sklad_check: 'pending', final_status: null, shipped_pct: { [Op.lt]: 1 } },
+      attributes: ['id', 'dogovor_number', 'client_name', 'manager_name', 'createdAt', 'sklad_requested_at'],
+      order: [['sklad_requested_at', 'DESC NULLS LAST'], ['id', 'DESC']],
       limit: 100,
     });
-    const count = rows.length < 100 ? rows.length : await this.orderRepo.count({ where: { sklad_check: 'pending', final_status: null } });
+    const count = rows.length < 100 ? rows.length : await this.orderRepo.count({ where: { sklad_check: 'pending', final_status: null, shipped_pct: { [Op.lt]: 1 } } });
     return {
       count,
-      // `at` — tekshiruv so'ralgan vaqt: mahsulotlar o'zgarib qayta so'ralsa, yangi bildirishnoma bo'ladi
-      items: rows.map((o) => ({ id: o.id, dogovor_number: o.dogovor_number, client_name: o.client_name, manager_name: o.manager_name, at: o.updatedAt })),
+      // `at` — tekshiruv so'ralgan vaqt: qayta so'ralsa (mahsulotlar o'zgardi) — yangi bildirishnoma
+      items: rows.map((o) => ({
+        id: o.id,
+        dogovor_number: o.dogovor_number,
+        client_name: o.client_name,
+        manager_name: o.manager_name,
+        at: o.sklad_requested_at || o.createdAt,
+      })),
     };
   }
 

@@ -66,6 +66,7 @@ export interface OtgruzkaOrderAtr {
   erp_written_at?: Date | null;
   items?: OtgruzkaItem[] | null;
   sklad_check?: SkladCheck | null;
+  sklad_requested_at?: Date | null;
   sklad_checked_at?: Date | null;
   sklad_checked_by?: number | null;
   sklad_check_note?: string | null;
@@ -200,6 +201,10 @@ export class OtgruzkaOrder extends Model<OtgruzkaOrder, OtgruzkaOrderAtr> {
 
   @Column({ type: DataType.STRING(16), allowNull: true })
   declare sklad_check: SkladCheck | null;
+
+  // Tekshiruv so'ralgan vaqt (bildirishnoma vaqti; karta tahrirlansa o'zgarmaydi)
+  @Column({ type: DataType.DATE, allowNull: true })
+  declare sklad_requested_at: Date | null;
 
   @Column({ type: DataType.DATE, allowNull: true })
   declare sklad_checked_at: Date | null;

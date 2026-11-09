@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -10,21 +11,31 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
+  ValidationPipe,
 } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBody, ApiConsumes, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JwtGuard } from 'src/guards/jwt.guard';
 import {
   CreateNoteDto,
   CreateOrderDto,
   CreatePaymentDto,
+  DidoxFileDto,
   HookDto,
   OtgruzkaSettingsDto,
   ScriptUrlDto,
+  SkladCheckDto,
   UpdateOrderDto,
   UpdatePaymentDto,
 } from './dto/otgruzka.dto';
 import { AuthPayload, OtgruzkaService } from './otgruzka.service';
+
+const MAX_DIDOX_FILE = 25 * 1024 * 1024;
+// Multipart maydonlari matn — DTO'dagi @Transform ishlashi uchun
+const formPipe = new ValidationPipe({ transform: true, whitelist: true });
 
 interface RequestWithPayload {
   payload: AuthPayload;
@@ -147,6 +158,71 @@ export class OtgruzkaController {
   @ApiOperation({ summary: "ERP'da kiritilgan to'lovni o'chirish" })
   removePayment(@Param('id', ParseIntPipe) id: number) {
     return this.service.removePayment(id);
+  }
+
+  // ─── Didox (schyot-faktura fayllari) ───────────────────────────────
+  @Post(':id/didox')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_DIDOX_FILE } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: "Didox: schyot-faktura faylini yuklash (Cloudflare R2) + fayldagi summa" })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        amount: { type: 'number' },
+        invoice_number: { type: 'string' },
+        invoice_date: { type: 'string', format: 'date' },
+        comment: { type: 'string' },
+      },
+    },
+  })
+  addDidox(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+    @Body(formPipe) dto: DidoxFileDto,
+    @Req() req: RequestWithPayload,
+  ) {
+    if (!file?.buffer) throw new BadRequestException({ message: 'Fayl yuborilmadi', code: 'OT_DIDOX_NO_FILE' });
+    return this.service.addDidoxFile(id, file, dto, req.payload);
+  }
+
+  @Patch('didox/:fileId')
+  @ApiOperation({ summary: "Didox fayli: summa, raqam, sana, izohni o'zgartirish" })
+  updateDidox(@Param('fileId', ParseIntPipe) fileId: number, @Body(formPipe) dto: DidoxFileDto) {
+    return this.service.updateDidoxFile(fileId, dto);
+  }
+
+  @Delete('didox/:fileId')
+  @ApiOperation({ summary: "Didox faylini o'chirish (yuklagan xodim yoki admin)" })
+  removeDidox(@Param('fileId', ParseIntPipe) fileId: number, @Req() req: RequestWithPayload) {
+    return this.service.removeDidoxFile(fileId, req.payload);
+  }
+
+  @Get('didox/:fileId/link')
+  @ApiOperation({ summary: 'Didox fayli uchun qisqa muddatli havola (inline | download)' })
+  @ApiQuery({ name: 'mode', required: false, enum: ['inline', 'download'] })
+  didoxLink(@Param('fileId', ParseIntPipe) fileId: number, @Query('mode') mode?: 'inline' | 'download') {
+    return this.service.didoxFileLink(fileId, mode === 'download' ? 'download' : 'inline');
+  }
+
+  // ─── Ombor tekshiruvi ───────────────────────────────────────────────
+  @Get('sklad-checks')
+  @ApiOperation({ summary: "Ombor: yangi shartnomalar — mahsulotlar borligini tekshirish kerak" })
+  skladChecks() {
+    return this.service.skladChecks();
+  }
+
+  @Get('sklad-checks/count')
+  @ApiOperation({ summary: 'Ombor tekshiruvi kutayotgan shartnomalar soni (bildirishnoma uchun)' })
+  skladChecksCount() {
+    return this.service.skladChecksCount();
+  }
+
+  @Post(':id/sklad-check')
+  @ApiOperation({ summary: 'Ombor tekshirdi deb belgilash' })
+  skladCheck(@Param('id', ParseIntPipe) id: number, @Body() dto: SkladCheckDto, @Req() req: RequestWithPayload) {
+    return this.service.markSkladChecked(id, dto.note, req.payload);
   }
 
   @Post(':id/notes')

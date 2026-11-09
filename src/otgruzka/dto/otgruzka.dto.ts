@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -168,4 +168,35 @@ export class HookDto {
   @IsOptional()
   @IsBoolean()
   ping?: boolean;
+}
+
+// Didox schyot-faktura fayli: multipart maydonlari matn bo'lib keladi — raqamga o'giriladi
+const toNum = ({ value }: { value: unknown }) =>
+  value === '' || value === null || value === undefined ? null : Number(String(value).replace(/\s/g, '').replace(',', '.'));
+const emptyToNull = ({ value }: { value: unknown }) => (value === '' ? null : value);
+
+export class DidoxFileDto {
+  @ApiPropertyOptional({ description: "Fayl ichida ko'rsatilgan summa" })
+  @IsOptional()
+  @Transform(toNum)
+  @ValidateIf((_, v) => v !== null)
+  @IsNumber()
+  amount?: number | null;
+
+  @ApiPropertyOptional() @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(64)
+  invoice_number?: string | null;
+
+  @ApiPropertyOptional() @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsDateString()
+  invoice_date?: string | null;
+
+  @ApiPropertyOptional() @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(1000)
+  comment?: string | null;
+}
+
+export class SkladCheckDto {
+  @ApiPropertyOptional({ description: 'Ombor izohi (masalan: 2 ta yetishmaydi)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  note?: string;
 }

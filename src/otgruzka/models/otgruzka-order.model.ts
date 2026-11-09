@@ -65,8 +65,16 @@ export interface OtgruzkaOrderAtr {
   paid_at?: Date | null;
   erp_written_at?: Date | null;
   items?: OtgruzkaItem[] | null;
+  sklad_check?: SkladCheck | null;
+  sklad_checked_at?: Date | null;
+  sklad_checked_by?: number | null;
+  sklad_check_note?: string | null;
   created_by?: number | null;
 }
+
+// Ombor tekshiruvi: yangi ERP shartnomasi kelganda 'pending' — ombor mahsulotlar borligini
+// tekshirib 'done' qiladi. null — tekshiruv so'ralmagan (eski/jadvaldan kelgan kartalar).
+export type SkladCheck = 'pending' | 'done';
 
 // Otgruzka kuzatuv kartasi — bitta shartnoma bo'yicha jo'natish jarayoni.
 // Mirror rejimda Google Sheets "Главная" varag'ining bir qatori.
@@ -189,6 +197,18 @@ export class OtgruzkaOrder extends Model<OtgruzkaOrder, OtgruzkaOrderAtr> {
   // Mahsulotlar (nom, soni, narxi) — ERP shartnomasidan yoki PDF'dan; jadvalda bunday ustun yo'q
   @Column({ type: DataType.JSONB, allowNull: true })
   declare items: OtgruzkaItem[] | null;
+
+  @Column({ type: DataType.STRING(16), allowNull: true })
+  declare sklad_check: SkladCheck | null;
+
+  @Column({ type: DataType.DATE, allowNull: true })
+  declare sklad_checked_at: Date | null;
+
+  @Column({ type: DataType.INTEGER, allowNull: true })
+  declare sklad_checked_by: number | null;
+
+  @Column({ type: DataType.TEXT, allowNull: true })
+  declare sklad_check_note: string | null;
 
   @ForeignKey(() => User)
   @Column({ type: DataType.INTEGER, allowNull: true })

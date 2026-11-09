@@ -11,6 +11,7 @@ import { OtgruzkaPayment } from './models/otgruzka-payment.model';
 import { OtgruzkaNote } from './models/otgruzka-note.model';
 import { OtgruzkaLine } from './models/otgruzka-line.model';
 import { OtgruzkaSetting } from './models/otgruzka-setting.model';
+import { OtgruzkaDidoxFile } from './models/otgruzka-didox-file.model';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { OtgruzkaSetting } from './models/otgruzka-setting.model';
       OtgruzkaNote,
       OtgruzkaLine,
       OtgruzkaSetting,
+      OtgruzkaDidoxFile,
       Dogovor,
       User,
     ]),

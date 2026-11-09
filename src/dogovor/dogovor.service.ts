@@ -307,6 +307,14 @@ export class DogovorService {
         this.logger.warn(`Dogovor ${id}: otgruzka mahsulotlari yangilanmadi — ${e?.message}`);
       }
     }
+    // Shartnomadagi to'lov (summa/sana) o'zgarsa — otgruzka kartasidagi to'lov ham yangilanadi
+    if ('initial_payment' in data || 'payment_date' in data) {
+      try {
+        await this.otgruzka.syncDogovorPayment(dogovor, payload.user_id);
+      } catch (e: any) {
+        this.logger.warn(`Dogovor ${id}: otgruzka to'lovi yangilanmadi — ${e?.message}`);
+      }
+    }
     return this.findOne(id);
   }
 

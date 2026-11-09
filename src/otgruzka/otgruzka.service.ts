@@ -17,13 +17,16 @@ import { User } from 'src/users/models/user.model';
 import { Dogovor } from 'src/dogovor/models/dogovor.model';
 import { SheetFormatError } from 'src/sklad/sheet-parser';
 import { SkladService } from 'src/sklad/sklad.service';
+import { R2Service } from 'src/storage/r2.service';
 import {
   CreateNoteDto,
   CreateOrderDto,
   CreatePaymentDto,
+  DidoxFileDto,
   UpdateOrderDto,
   UpdatePaymentDto,
 } from './dto/otgruzka.dto';
+import { OtgruzkaDidoxFile } from './models/otgruzka-didox-file.model';
 import { OtgruzkaLine } from './models/otgruzka-line.model';
 import { OtgruzkaNote } from './models/otgruzka-note.model';
 import { OtgruzkaItem, OtgruzkaOrder, OtgruzkaOrderAtr } from './models/otgruzka-order.model';
@@ -185,8 +188,10 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     @InjectModel(OtgruzkaSetting) private readonly settingRepo: typeof OtgruzkaSetting,
     @InjectModel(Dogovor) private readonly dogovorRepo: typeof Dogovor,
     @InjectModel(User) private readonly userRepo: typeof User,
+    @InjectModel(OtgruzkaDidoxFile) private readonly didoxRepo: typeof OtgruzkaDidoxFile,
     private readonly sequelize: Sequelize,
     private readonly sklad: SkladService,
+    private readonly r2: R2Service,
   ) {}
 
   // Mirror rejimda jadval har 5 daqiqada avtomatik o'qiladi (OTGRUZKA_SYNC_ENABLED=false — o'chiq)
@@ -195,9 +200,14 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     try {
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS erp_written_at TIMESTAMPTZ`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS items JSONB`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_check VARCHAR(16)`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_checked_at TIMESTAMPTZ`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_checked_by INTEGER`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_check_note TEXT`);
     } catch (e: any) {
       this.logger.error(`otgruzka_orders ustuni qo'shilmadi: ${e?.message}`);
     }
+    this.backfillDogovorPayments().catch((e) => this.logger.warn(`Shartnoma to'lovlari ko'chirilmadi: ${e?.message}`));
     if (process.env.OTGRUZKA_SYNC_ENABLED === 'false') {
       this.logger.log("OTGRUZKA_SYNC_ENABLED=false — avtomatik sinxron o'chirilgan");
       return;
@@ -381,6 +391,17 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       'OT_MIRROR_MODE',
       "Hozir Google Sheets asosiy manba — bu ma'lumot jadvalda o'zgartiriladi va ERP'ga avtomatik tushadi",
     );
+  }
+
+  // Karta uchun tahrirlash rejimi: jadvalda qatori yo'q (ERP'da ochilgan) karta skript
+  // ulanmagan bo'lsa ham ERP'da tahrirlanadi — jadval uni qaytarib yozmaydi.
+  private async editModeFor(o: OtgruzkaOrder): Promise<'live' | 'sync'> {
+    try {
+      return await this.editMode();
+    } catch (e) {
+      if (o.source !== 'sheet' || o.sheet_removed) return 'live';
+      throw e;
+    }
   }
 
   // Kartadagi o'zgarishni jadvalga yozadi. Jadvalda qatori yo'q karta bo'lsa — jadvalga yangi
@@ -737,7 +758,22 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       raw: true,
     })) as unknown as Array<{ order_id: number; n: string }>;
     const lineCount = new Map(counts.map((c) => [c.order_id, Number(c.n)]));
-    return orders.map((o) => ({ ...this.view(o), lines_count: lineCount.get(o.id) || 0 }));
+    const didox = (await this.didoxRepo.findAll({
+      attributes: [
+        'order_id',
+        [this.sequelize.fn('COUNT', this.sequelize.col('id')), 'n'],
+        [this.sequelize.fn('COALESCE', this.sequelize.fn('SUM', this.sequelize.col('amount')), 0), 'sum'],
+      ],
+      group: ['order_id'],
+      raw: true,
+    })) as unknown as Array<{ order_id: number; n: string; sum: string }>;
+    const didoxBy = new Map(didox.map((d) => [d.order_id, { n: Number(d.n), sum: r2(Number(d.sum) || 0) }]));
+    return orders.map((o) => ({
+      ...this.view(o),
+      lines_count: lineCount.get(o.id) || 0,
+      didox_files_count: didoxBy.get(o.id)?.n || 0,
+      didox_files_sum: didoxBy.get(o.id)?.sum || 0,
+    }));
   }
 
   async stats() {
@@ -803,10 +839,15 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     });
     if (!o) throw otError(NotFoundException, 'OT_NOT_FOUND', 'Yozuv topilmadi');
     const creator = { model: User, as: 'creator', attributes: ['id', 'firstname', 'lastname', 'username'] };
-    const [payments, notes, lines] = await Promise.all([
+    const [payments, notes, lines, didox_files] = await Promise.all([
       this.paymentRepo.findAll({ where: { order_id: id }, include: [creator], order: [['pay_date', 'ASC'], ['id', 'ASC']] }),
       this.noteRepo.findAll({ where: { order_id: id }, include: [creator], order: [['createdAt', 'DESC'], ['id', 'DESC']] }),
       this.lineRepo.findAll({ where: { order_id: id }, order: [['row_no', 'ASC']] }),
+      this.didoxRepo.findAll({
+        where: { order_id: id },
+        include: [{ model: User, as: 'uploader', attributes: ['id', 'firstname', 'lastname', 'username'] }],
+        order: [['invoice_date', 'ASC NULLS LAST'], ['id', 'ASC']],
+      }),
     ]);
     // Kartada mahsulot yo'q bo'lsa — bog'langan ERP shartnomasidagilar ko'rsatiladi
     const items = this.itemsOf(o as any);
@@ -816,7 +857,19 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       const { items: _skip, ...dog } = view.dogovor;
       view.dogovor = dog;
     }
-    return { ...view, items, items_from_dogovor: !o.items?.length && items.length > 0, payments, notes, lines };
+    const didox_files_sum = r2(didox_files.reduce((a, f) => a + (Number(f.amount) || 0), 0));
+    return {
+      ...view,
+      items,
+      items_from_dogovor: !o.items?.length && items.length > 0,
+      payments,
+      notes,
+      lines,
+      didox_files,
+      didox_files_count: didox_files.length,
+      didox_files_sum,
+      storage_ready: this.r2.isConfigured,
+    };
   }
 
   async lines() {
@@ -937,9 +990,15 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
         dogovor_id: same.dogovor_id ?? d.id,
         ...(!same.items?.length && items.length ? { items } : {}),
         ...(!same.manager_name && d.manager_name ? { manager_name: d.manager_name } : {}),
+        // Yangi shartnoma — ombor mahsulotlar borligini tekshirsin
+        ...(same.shipped_pct < 1 && !same.final_status ? { sklad_check: 'pending' as const, sklad_checked_at: null, sklad_checked_by: null, sklad_check_note: null } : {}),
       });
+      await this.syncDogovorPayment(d, userId, same.id);
       return { id: same.id, created: false };
     }
+
+    // Shartnomada kiritilgan boshlang'ich to'lov kartaga ham o'tadi
+    const initial = r2(Number(d.initial_payment) || 0);
 
     const base = {
       dogovor_number: number,
@@ -958,6 +1017,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       series: seriesOf(number),
       paid_sum: 0,
       sheet_status: formulaStatus(0),
+      sklad_check: 'pending',
       created_by: userId,
     } as OtgruzkaOrderAtr;
 
@@ -970,7 +1030,8 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     let o: OtgruzkaOrder;
     if (sheetMode === 'sync') {
       try {
-        o = await this.withSheet('sync', () => this.pushOrder(null, base), (extra) => this.orderRepo.create({ ...base, ...extra }));
+        // Jadvalga to'langan summa ham birga yoziladi (keyingi sinxron farq ko'rmasin)
+        o = await this.withSheet('sync', () => this.pushOrder(null, { ...base, paid_sum: initial }), (extra) => this.orderRepo.create({ ...base, ...extra }));
       } catch (e: any) {
         this.logger.warn(`Dogovor ${d.id}: jadvalga qator qo'shilmadi (${e?.message}) — karta faqat ERP'da ochildi`);
         o = await this.orderRepo.create(base);
@@ -985,7 +1046,93 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       source: 'erp',
       created_by: userId,
     } as any);
+    if (initial > EPS) await this.writeDogovorPayment(o.id, d, userId);
     return { id: o.id, created: true };
+  }
+
+  // ─── Shartnomadagi to'lov → karta to'lovlari ───────────────────────
+  // Shartnomadan kelgan to'lov `comment = 'sys:dogovor'` bilan bitta yozuv bo'lib turadi:
+  // shartnomada summa/sana o'zgarsa shu yozuv yangilanadi (takror qo'shilmaydi).
+  private dogovorPayDate(d: Dogovor) {
+    return String(d.payment_date || d.dogovor_date || todayStr()).slice(0, 10);
+  }
+
+  private async writeDogovorPayment(orderId: number, d: Dogovor, userId: number | null) {
+    const amount = r2(Number(d.initial_payment) || 0);
+    await this.sequelize.transaction(async (transaction) => {
+      const prev = await this.paymentRepo.findOne({ where: { order_id: orderId, comment: 'sys:dogovor' }, transaction });
+      if (amount > EPS) {
+        if (prev) await prev.update({ amount, pay_date: this.dogovorPayDate(d) }, { transaction });
+        else {
+          await this.paymentRepo.create(
+            { order_id: orderId, amount, pay_date: this.dogovorPayDate(d), comment: 'sys:dogovor', source: 'erp', created_by: userId },
+            { transaction },
+          );
+        }
+      } else if (prev) await prev.destroy({ transaction });
+      await this.recalcPaid(orderId, transaction);
+    });
+  }
+
+  /**
+   * Shartnomadagi boshlang'ich to'lov (summa + sana) bog'langan kartaga yoziladi.
+   * Jadval asosiy manba bo'lgan kartada to'lov jadvalga ham yoziladi (skript ulangan bo'lsa);
+   * ulanmagan bo'lsa tegilmaydi — aks holda keyingi sinxron uni qaytarib "tuzatib" yuboradi.
+   * Kartada qo'lda kiritilgan to'lovlar bo'lsa va shartnoma to'lovi hali yozilmagan bo'lsa —
+   * qo'shilmaydi (ikki marta hisoblanmasin).
+   */
+  async syncDogovorPayment(d: Dogovor, userId: number | null, onlyOrderId?: number) {
+    const orders = onlyOrderId
+      ? await this.orderRepo.findAll({ where: { id: onlyOrderId } })
+      : await this.orderRepo.findAll({ where: { dogovor_id: d.id } });
+    const amount = r2(Number(d.initial_payment) || 0);
+    for (const o of orders) {
+      const prev = await this.paymentRepo.findOne({ where: { order_id: o.id, comment: 'sys:dogovor' } });
+      if (!prev) {
+        if (!(amount > EPS)) continue;
+        const others = await this.paymentRepo.count({ where: { order_id: o.id } });
+        if (others > 0) continue;
+      } else if (same(prev.amount, amount) && prev.pay_date === this.dogovorPayDate(d)) continue;
+
+      let mode: 'live' | 'sync';
+      try {
+        mode = await this.editModeFor(o);
+      } catch {
+        continue; // jadval asosiy, skript ulanmagan
+      }
+      const delta = amount - (prev ? prev.amount : 0);
+      await this.withSheet(
+        Math.abs(delta) > EPS ? mode : 'live',
+        async () => this.pushOrder(o, { paid_sum: await this.paidTotalAfter(o.id, delta) }),
+        async (extra) => {
+          if (Object.keys(extra).length) await o.update(extra);
+          await this.writeDogovorPayment(o.id, d, userId);
+        },
+      );
+    }
+  }
+
+  // Bir martalik: avval ochilgan (to'lovsiz) kartalarga shartnomadagi to'lovni ko'chirish.
+  // Faqat jadvalga bog'liq bo'lmagan holatlar (ERP kartasi yoki ERP asosiy rejim) — tarmoqsiz.
+  private async backfillDogovorPayments() {
+    const flag = await this.settingRepo.findByPk('dogovor_pay_backfill');
+    if (flag?.value) return;
+    const live = (await this.getMode()) === 'live';
+    const orders = await this.orderRepo.findAll({
+      where: { dogovor_id: { [Op.ne]: null }, paid_sum: 0 },
+      include: [{ model: Dogovor, as: 'dogovor' }],
+    });
+    let n = 0;
+    for (const o of orders) {
+      const d = o.dogovor;
+      if (!d || !(Number(d.initial_payment) > EPS)) continue;
+      if (!live && o.source === 'sheet' && !o.sheet_removed) continue;
+      if (await this.paymentRepo.count({ where: { order_id: o.id } })) continue;
+      await this.writeDogovorPayment(o.id, d, null);
+      n++;
+    }
+    await this.settingRepo.upsert({ key: 'dogovor_pay_backfill', value: { at: new Date().toISOString(), orders: n } });
+    if (n) this.logger.log(`Shartnoma to'lovlari ${n} ta kartaga ko'chirildi`);
   }
 
   /** Shartnoma mahsulotlari o'zgarsa — bog'langan kartada ham yangilanadi (karta mahsulotlari shartnomadan olingan bo'lsa) */
@@ -997,7 +1144,11 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     for (const o of orders) {
       // Kartada mahsulotlar qo'lda o'zgartirilgan bo'lsa — tegilmaydi
       if (!o.items?.length || JSON.stringify(normItems(o.items)) === prev) {
-        await o.update({ items: items.length ? items : null });
+        const recheck = items.length && o.shipped_pct < 1 && !o.final_status;
+        await o.update({
+          items: items.length ? items : null,
+          ...(recheck ? { sklad_check: 'pending' as const, sklad_checked_at: null, sklad_checked_by: null, sklad_check_note: null } : {}),
+        });
       }
     }
   }
@@ -1031,7 +1182,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     const keys = Object.keys(dto).filter((k) => (dto as any)[k] !== undefined);
     const free = ['next_action', 'next_action_date', 'items'];
     // Faqat ERP'dagi maydonlar (keyingi qadam, mahsulotlar) — jadvalga tegmaydi, har rejimda mumkin
-    const mode = keys.some((k) => !free.includes(k)) ? await this.editMode() : 'live';
+    const mode = keys.some((k) => !free.includes(k)) ? await this.editModeFor(o) : 'live';
     if (dto.final_status && !(dto.final_reason ?? o.final_reason)?.trim()) {
       throw otError(BadRequestException, 'OT_REASON_REQUIRED', 'Yakuniy holat uchun sababini yozing');
     }
@@ -1098,8 +1249,8 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
   }
 
   async addPayment(orderId: number, dto: CreatePaymentDto, payload: AuthPayload) {
-    const mode = await this.editMode();
     const o = await this.findOrder(orderId);
+    const mode = await this.editModeFor(o);
     if (!dto.amount) throw otError(BadRequestException, 'OT_AMOUNT_ZERO', "Summa 0 bo'lmasligi kerak");
     await this.withSheet(
       mode,
@@ -1123,12 +1274,12 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     const p = await this.paymentRepo.findByPk(id);
     if (!p) throw otError(NotFoundException, 'OT_PAYMENT_NOT_FOUND', "To'lov topilmadi");
     const amountChanged = dto.amount !== undefined && dto.amount !== p.amount;
+    const o = await this.findOrder(p.order_id);
     let mode: 'live' | 'sync' = 'live';
     if (amountChanged) {
-      mode = await this.editMode();
+      mode = await this.editModeFor(o);
       if (!dto.amount) throw otError(BadRequestException, 'OT_AMOUNT_ZERO', "Summa 0 bo'lmasligi kerak");
     }
-    const o = await this.findOrder(p.order_id);
     await this.withSheet(
       mode,
       async () => this.pushOrder(o, { paid_sum: await this.paidTotalAfter(p.order_id, (dto.amount ?? p.amount) - p.amount) }),
@@ -1154,13 +1305,13 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
   }
 
   async removePayment(id: number) {
-    const mode = await this.editMode();
     const p = await this.paymentRepo.findByPk(id);
     if (!p) throw otError(NotFoundException, 'OT_PAYMENT_NOT_FOUND', "To'lov topilmadi");
     if (p.source === 'sheet') {
       throw otError(ConflictException, 'OT_PAYMENT_FROM_SHEET', "Jadvaldan kelgan to'lovni o'chirib bo'lmaydi — tuzatish (manfiy) to'lov kiriting");
     }
     const o = await this.findOrder(p.order_id);
+    const mode = await this.editModeFor(o);
     await this.withSheet(
       mode,
       async () => this.pushOrder(o, { paid_sum: await this.paidTotalAfter(p.order_id, -p.amount) }),
@@ -1207,5 +1358,151 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     const orderId = n.order_id;
     await n.destroy();
     return this.detail(orderId);
+  }
+
+  // ─── Didox: schyot-faktura fayllari (Cloudflare R2) ────────────────
+  private static readonly DIDOX_MIME = /^(application\/pdf|image\/(png|jpe?g|webp|heic)|application\/(xml|json|zip|x-zip-compressed|vnd\.openxmlformats-officedocument\.[\w.]+|vnd\.ms-excel|msword)|text\/(xml|plain|csv))$/i;
+
+  private didoxFields(dto: DidoxFileDto) {
+    const out: Record<string, unknown> = {};
+    if (dto.amount !== undefined) {
+      if (dto.amount !== null && !Number.isFinite(dto.amount)) throw otError(BadRequestException, 'OT_DIDOX_AMOUNT', "Summa noto'g'ri");
+      out.amount = dto.amount === null ? null : r2(dto.amount);
+    }
+    if (dto.invoice_number !== undefined) out.invoice_number = dto.invoice_number?.trim() || null;
+    if (dto.invoice_date !== undefined) out.invoice_date = dto.invoice_date || null;
+    if (dto.comment !== undefined) out.comment = dto.comment?.trim() || null;
+    return out;
+  }
+
+  async addDidoxFile(orderId: number, file: Express.Multer.File, dto: DidoxFileDto, payload: AuthPayload) {
+    const o = await this.findOrder(orderId);
+    if (!this.r2.isConfigured) throw otError(BadRequestException, 'OT_STORAGE_OFF', "Fayl saqlash (Cloudflare R2) sozlanmagan");
+    if (file.mimetype && !OtgruzkaService.DIDOX_MIME.test(file.mimetype)) {
+      throw otError(BadRequestException, 'OT_DIDOX_TYPE', "Bu turdagi fayl qabul qilinmaydi (PDF, rasm, Excel, XML)");
+    }
+    // Multer fayl nomini latin1 sifatida beradi — kirill nomlar buzilmasin
+    const name = Buffer.from(file.originalname || 'file', 'latin1').toString('utf8');
+    const key = this.r2.buildKey(`otgruzka/${o.id}/didox`, name);
+    await this.r2.upload(key, file.buffer, file.mimetype);
+    try {
+      const f = await this.didoxRepo.create({
+        order_id: o.id,
+        file_name: name.slice(0, 255),
+        file_key: key,
+        mime_type: file.mimetype || null,
+        size_bytes: file.size,
+        uploaded_by: payload.user_id,
+        ...this.didoxFields(dto),
+      } as any);
+      await this.noteRepo.create({
+        order_id: o.id,
+        kind: 'change',
+        data: { field: 'didox_file', action: 'add', file_name: f.file_name, amount: f.amount },
+        source: 'erp',
+        created_by: payload.user_id,
+      } as any);
+    } catch (e) {
+      await this.r2.remove(key); // bazaga yozilmasa R2'da yetim fayl qolmasin
+      throw e;
+    }
+    return this.detail(o.id);
+  }
+
+  private async findDidox(id: number) {
+    const f = await this.didoxRepo.findByPk(id);
+    if (!f) throw otError(NotFoundException, 'OT_DIDOX_NOT_FOUND', 'Fayl topilmadi');
+    return f;
+  }
+
+  async updateDidoxFile(id: number, dto: DidoxFileDto) {
+    const f = await this.findDidox(id);
+    await f.update(this.didoxFields(dto));
+    return this.detail(f.order_id);
+  }
+
+  // O'chirish: yuklagan xodim yoki admin
+  async removeDidoxFile(id: number, payload: AuthPayload) {
+    const f = await this.findDidox(id);
+    if (f.uploaded_by !== payload.user_id && !(await this.isAdmin(payload))) {
+      throw otError(ForbiddenException, 'OT_NOT_OWNER', "Faqat yuklagan xodim yoki admin o'chira oladi");
+    }
+    const orderId = f.order_id;
+    await this.noteRepo.create({
+      order_id: orderId,
+      kind: 'change',
+      data: { field: 'didox_file', action: 'remove', file_name: f.file_name, amount: f.amount },
+      source: 'erp',
+      created_by: payload.user_id,
+    } as any);
+    await f.destroy();
+    await this.r2.remove(f.file_key);
+    return this.detail(orderId);
+  }
+
+  async didoxFileLink(id: number, mode: 'download' | 'inline' = 'inline') {
+    const f = await this.findDidox(id);
+    const expiresIn = 300;
+    const url = mode === 'download'
+      ? await this.r2.getDownloadUrl(f.file_key, f.file_name, expiresIn)
+      : await this.r2.getInlineUrl(f.file_key, expiresIn);
+    return { url, expiresIn };
+  }
+
+  // ─── Ombor tekshiruvi (yangi shartnoma → bildirishnoma) ────────────
+  /** Ombor tekshirishi kerak bo'lgan yangi shartnomalar (mahsulotlar va ombordagi holati bilan) */
+  async skladChecks() {
+    const orders = await this.orderRepo.findAll({
+      where: { sklad_check: 'pending', final_status: null },
+      include: [{ model: Dogovor, as: 'dogovor', attributes: ['id', 'items'] }],
+      order: [['createdAt', 'DESC'], ['id', 'DESC']],
+    });
+    const list = orders.map((order) => ({ order, items: this.itemsOf(order as any) }));
+    const withItems = list.filter((x) => x.items.length);
+    const res = await this.readinessOf(withItems);
+    const byId = new Map(withItems.map((x, i) => [x.order.id, res[i]]));
+    return list.map(({ order, items }) => ({
+      id: order.id,
+      dogovor_id: order.dogovor_id,
+      dogovor_number: order.dogovor_number,
+      dogovor_date: order.dogovor_date,
+      client_name: order.client_name,
+      manager_name: order.manager_name,
+      contract_sum: order.contract_sum,
+      created_at: order.createdAt,
+      updated_at: order.updatedAt,
+      items,
+      ...(byId.get(order.id) || { rows: [], summary: { positions: 0, ready_positions: 0, unknown: 0, pct: 0 } }),
+    }));
+  }
+
+  async skladChecksCount() {
+    return { count: await this.orderRepo.count({ where: { sklad_check: 'pending', final_status: null } }) };
+  }
+
+  /** Ombor tekshirdi: izoh kartaning tarixiga yoziladi */
+  async markSkladChecked(id: number, note: string | undefined, payload: AuthPayload) {
+    const o = await this.orderRepo.findByPk(id, { include: [{ model: Dogovor, as: 'dogovor', attributes: ['id', 'items'] }] });
+    if (!o) throw otError(NotFoundException, 'OT_NOT_FOUND', 'Yozuv topilmadi');
+    const text = note?.trim() || null;
+    const [res] = await this.readinessOf([{ order: o, items: this.itemsOf(o as any) }]);
+    await this.sequelize.transaction(async (transaction) => {
+      await o.update(
+        { sklad_check: 'done', sklad_checked_at: new Date(), sklad_checked_by: payload.user_id, sklad_check_note: text },
+        { transaction },
+      );
+      await this.noteRepo.create(
+        {
+          order_id: o.id,
+          kind: 'change',
+          text,
+          data: { field: 'sklad_check', ready: res.summary.ready_positions, total: res.summary.positions },
+          source: 'erp',
+          created_by: payload.user_id,
+        } as any,
+        { transaction },
+      );
+    });
+    return { ok: true };
   }
 }

@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { OtgruzkaService } from 'src/otgruzka/otgruzka.service';
 import { InjectModel } from '@nestjs/sequelize';
-import { Op, Sequelize } from 'sequelize';
+import { Op, Order, Sequelize } from 'sequelize';
 import * as XLSX from 'xlsx';
 import { User } from 'src/users/models/user.model';
 import { CreateDogovorDto } from './dto/create-dogovor.dto';
@@ -115,6 +115,14 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
+// Ro'yxat tartibi: oxirgi kiritilgan shartnoma tepada (ERP'ga qo'shilgan vaqti bo'yicha).
+// Bir vaqtda (Excel importda) kiritilganlar — raqami kattasi tepada.
+const NEWEST_FIRST: Order = [
+  ['createdAt', 'DESC'],
+  ['dogovor_number', 'DESC NULLS LAST'],
+  ['id', 'DESC'],
+];
+
 @Injectable()
 export class DogovorService {
   private readonly logger = new Logger(DogovorService.name);
@@ -180,7 +188,7 @@ export class DogovorService {
     return this.dogovorRepository.findAll({
       where,
       include: creatorInclude,
-      order: [['dogovor_number', 'DESC NULLS LAST']],
+      order: NEWEST_FIRST,
     });
   }
 
@@ -199,7 +207,7 @@ export class DogovorService {
       this.dogovorRepository.findAndCountAll({
         where,
         include: creatorInclude,
-        order: [['dogovor_number', 'DESC NULLS LAST'], ['id', 'DESC']],
+        order: NEWEST_FIRST,
         limit,
         offset,
       }),
@@ -257,7 +265,7 @@ export class DogovorService {
   async findFiltered(payload: AuthPayload, q: DogovorListQuery) {
     return this.dogovorRepository.findAll({
       where: buildDogovorWhere(q, this.scope(payload), payload.is_admin),
-      order: [['dogovor_number', 'DESC NULLS LAST'], ['id', 'DESC']],
+      order: NEWEST_FIRST,
     });
   }
 

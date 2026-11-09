@@ -749,7 +749,8 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     const orders = await this.orderRepo.findAll({
       where: includeRemoved ? {} : { sheet_removed: false },
       include: [{ model: Dogovor, as: 'dogovor', attributes: ['id', 'dogovor_number', 'dogovor_date'] }],
-      order: [['sheet_row', 'ASC NULLS LAST'], ['id', 'ASC']],
+      // Oxirgi kiritilgan karta tepada; jadvaldan bir vaqtda kelganlar — pastdagi qator tepada
+      order: [['createdAt', 'DESC'], ['sheet_row', 'DESC NULLS FIRST'], ['id', 'DESC']],
     });
     const counts = (await this.lineRepo.findAll({
       attributes: ['order_id', [this.sequelize.fn('COUNT', this.sequelize.col('id')), 'n']],
@@ -1476,8 +1477,20 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     }));
   }
 
+  /** Bildirishnoma uchun: soni va qisqa ro'yxat (har biri alohida o'qilgan deb belgilanadi) */
   async skladChecksCount() {
-    return { count: await this.orderRepo.count({ where: { sklad_check: 'pending', final_status: null } }) };
+    const rows = await this.orderRepo.findAll({
+      where: { sklad_check: 'pending', final_status: null },
+      attributes: ['id', 'dogovor_number', 'client_name', 'manager_name', 'createdAt', 'updatedAt'],
+      order: [['updatedAt', 'DESC'], ['id', 'DESC']],
+      limit: 100,
+    });
+    const count = rows.length < 100 ? rows.length : await this.orderRepo.count({ where: { sklad_check: 'pending', final_status: null } });
+    return {
+      count,
+      // `at` — tekshiruv so'ralgan vaqt: mahsulotlar o'zgarib qayta so'ralsa, yangi bildirishnoma bo'ladi
+      items: rows.map((o) => ({ id: o.id, dogovor_number: o.dogovor_number, client_name: o.client_name, manager_name: o.manager_name, at: o.updatedAt })),
+    };
   }
 
   /** Ombor tekshirdi: izoh kartaning tarixiga yoziladi */

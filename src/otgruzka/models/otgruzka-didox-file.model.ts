@@ -2,8 +2,13 @@ import { BelongsTo, Column, DataType, ForeignKey, Model, Table } from 'sequelize
 import { User } from 'src/users/models/user.model';
 import { OtgruzkaOrder } from './otgruzka-order.model';
 
+// invoice — schyot-faktura (summasi bilan), poa — ishonchnoma (summasiz)
+export const DIDOX_KINDS = ['invoice', 'poa'] as const;
+export type DidoxKind = (typeof DIDOX_KINDS)[number];
+
 export interface OtgruzkaDidoxFileAtr {
   order_id: number;
+  kind?: DidoxKind;
   file_name: string;
   file_key: string;
   mime_type?: string | null;
@@ -15,7 +20,7 @@ export interface OtgruzkaDidoxFileAtr {
   uploaded_by?: number | null;
 }
 
-// Didox: otgruzka kartasiga biriktirilgan schyot-faktura fayllari (Cloudflare R2'da).
+// Didox: otgruzka kartasiga biriktirilgan schyot-faktura va ishonchnoma fayllari (Cloudflare R2'da).
 // `amount` — fayl (schyot-faktura) ichida ko'rsatilgan summa, yuklashda kiritiladi.
 @Table({ tableName: 'otgruzka_didox_files', timestamps: true })
 export class OtgruzkaDidoxFile extends Model<OtgruzkaDidoxFile, OtgruzkaDidoxFileAtr> {
@@ -28,6 +33,9 @@ export class OtgruzkaDidoxFile extends Model<OtgruzkaDidoxFile, OtgruzkaDidoxFil
 
   @BelongsTo(() => OtgruzkaOrder, { foreignKey: 'order_id', as: 'order' })
   declare order?: OtgruzkaOrder;
+
+  @Column({ type: DataType.STRING(16), allowNull: false, defaultValue: 'invoice' })
+  declare kind: DidoxKind;
 
   @Column({ type: DataType.STRING, allowNull: false })
   declare file_name: string;

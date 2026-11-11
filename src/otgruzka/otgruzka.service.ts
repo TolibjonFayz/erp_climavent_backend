@@ -201,6 +201,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS erp_written_at TIMESTAMPTZ`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS items JSONB`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_check VARCHAR(16)`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_didox_files ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'invoice'`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_requested_at TIMESTAMPTZ`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_checked_at TIMESTAMPTZ`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_checked_by INTEGER`);
@@ -760,21 +761,24 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       raw: true,
     })) as unknown as Array<{ order_id: number; n: string }>;
     const lineCount = new Map(counts.map((c) => [c.order_id, Number(c.n)]));
+    // Schyot-faktura soni va summasi + ishonchnomalar soni (summa faqat schyot-fakturalardan)
     const didox = (await this.didoxRepo.findAll({
       attributes: [
         'order_id',
-        [this.sequelize.fn('COUNT', this.sequelize.col('id')), 'n'],
-        [this.sequelize.fn('COALESCE', this.sequelize.fn('SUM', this.sequelize.col('amount')), 0), 'sum'],
+        [this.sequelize.literal(`COUNT(*) FILTER (WHERE kind <> 'poa')`), 'n'],
+        [this.sequelize.literal(`COUNT(*) FILTER (WHERE kind = 'poa')`), 'poa'],
+        [this.sequelize.literal(`COALESCE(SUM(amount) FILTER (WHERE kind <> 'poa'), 0)`), 'sum'],
       ],
       group: ['order_id'],
       raw: true,
-    })) as unknown as Array<{ order_id: number; n: string; sum: string }>;
-    const didoxBy = new Map(didox.map((d) => [d.order_id, { n: Number(d.n), sum: r2(Number(d.sum) || 0) }]));
+    })) as unknown as Array<{ order_id: number; n: string; poa: string; sum: string }>;
+    const didoxBy = new Map(didox.map((d) => [d.order_id, { n: Number(d.n), poa: Number(d.poa), sum: r2(Number(d.sum) || 0) }]));
     return orders.map((o) => ({
       ...this.view(o),
       lines_count: lineCount.get(o.id) || 0,
       didox_files_count: didoxBy.get(o.id)?.n || 0,
       didox_files_sum: didoxBy.get(o.id)?.sum || 0,
+      didox_poa_count: didoxBy.get(o.id)?.poa || 0,
     }));
   }
 
@@ -859,7 +863,8 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       const { items: _skip, ...dog } = view.dogovor;
       view.dogovor = dog;
     }
-    const didox_files_sum = r2(didox_files.reduce((a, f) => a + (Number(f.amount) || 0), 0));
+    const invoices = didox_files.filter((f) => f.kind !== 'poa');
+    const didox_files_sum = r2(invoices.reduce((a, f) => a + (Number(f.amount) || 0), 0));
     return {
       ...view,
       items,
@@ -868,8 +873,9 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       notes,
       lines,
       didox_files,
-      didox_files_count: didox_files.length,
+      didox_files_count: invoices.length,
       didox_files_sum,
+      didox_poa_count: didox_files.length - invoices.length,
       storage_ready: this.r2.isConfigured,
     };
   }
@@ -1405,11 +1411,14 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
         size_bytes: file.size,
         uploaded_by: payload.user_id,
         ...this.didoxFields(dto),
+        kind: dto.kind || 'invoice',
+        // Ishonchnomada summa bo'lmaydi
+        ...(dto.kind === 'poa' ? { amount: null } : {}),
       } as any);
       await this.noteRepo.create({
         order_id: o.id,
         kind: 'change',
-        data: { field: 'didox_file', action: 'add', file_name: f.file_name, amount: f.amount },
+        data: { field: 'didox_file', action: 'add', file_kind: f.kind, file_name: f.file_name, amount: f.amount },
         source: 'erp',
         created_by: payload.user_id,
       } as any);
@@ -1428,7 +1437,9 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
 
   async updateDidoxFile(id: number, dto: DidoxFileDto) {
     const f = await this.findDidox(id);
-    await f.update(this.didoxFields(dto));
+    const fields = this.didoxFields(dto);
+    if (f.kind === 'poa') delete fields.amount;
+    await f.update(fields);
     return this.detail(f.order_id);
   }
 
@@ -1442,7 +1453,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     await this.noteRepo.create({
       order_id: orderId,
       kind: 'change',
-      data: { field: 'didox_file', action: 'remove', file_name: f.file_name, amount: f.amount },
+      data: { field: 'didox_file', action: 'remove', file_kind: f.kind, file_name: f.file_name, amount: f.amount },
       source: 'erp',
       created_by: payload.user_id,
     } as any);

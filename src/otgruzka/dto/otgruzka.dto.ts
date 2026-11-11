@@ -17,6 +17,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { FINAL_STATUSES } from '../models/otgruzka-order.model';
+import { DIDOX_KINDS, DidoxKind } from '../models/otgruzka-didox-file.model';
 
 // DIQQAT: global ValidationPipe `whitelist: true` — dekoratorsiz maydon jimgina
 // tashlab yuboriladi. Har bir maydonga validator qo'yish shart.
@@ -176,6 +177,11 @@ const toNum = ({ value }: { value: unknown }) =>
 const emptyToNull = ({ value }: { value: unknown }) => (value === '' ? null : value);
 
 export class DidoxFileDto {
+  @ApiPropertyOptional({ enum: DIDOX_KINDS, description: "invoice — schyot-faktura, poa — ishonchnoma (faqat yuklashda)" })
+  @IsOptional()
+  @IsIn(DIDOX_KINDS as unknown as string[])
+  kind?: DidoxKind;
+
   @ApiPropertyOptional({ description: "Fayl ichida ko'rsatilgan summa" })
   @IsOptional()
   @Transform(toNum)

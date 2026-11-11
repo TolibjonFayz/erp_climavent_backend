@@ -1426,7 +1426,19 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       await this.r2.remove(key); // bazaga yozilmasa R2'da yetim fayl qolmasin
       throw e;
     }
-    return this.detail(o.id);
+    // Ishonchnoma yuklandi — Didox'dagi "Ishonchnoma: bor" belgisi o'zi yoqiladi (rasmiy shartnomalarda).
+    // Oddiy tahrir yo'li bilan: tarixga yoziladi va ikki tomonlama rejimda jadvalga ham boradi.
+    // Yoqib bo'lmasa (jadval asosiy, skript ulanmagan) — fayl baribir saqlanadi, frontend ogohlantiradi.
+    let poa_flag_skipped = false;
+    if (dto.kind === 'poa' && isOfficial(o.series) && o.didox_poa !== true) {
+      try {
+        await this.update(o.id, { didox_poa: true } as UpdateOrderDto, payload);
+      } catch (e: any) {
+        poa_flag_skipped = true;
+        this.logger.warn(`Karta ${o.id}: ishonchnoma belgisi yoqilmadi — ${e?.message}`);
+      }
+    }
+    return { ...(await this.detail(o.id)), poa_flag_skipped };
   }
 
   private async findDidox(id: number) {

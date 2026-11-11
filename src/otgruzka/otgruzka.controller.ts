@@ -23,6 +23,7 @@ import {
   CreateNoteDto,
   CreateOrderDto,
   CreatePaymentDto,
+  DidoxCheckDto,
   DidoxFileDto,
   HookDto,
   OtgruzkaSettingsDto,
@@ -185,6 +186,12 @@ export class OtgruzkaController {
   ) {
     if (!file?.buffer) throw new BadRequestException({ message: 'Fayl yuborilmadi', code: 'OT_DIDOX_NO_FILE' });
     return this.service.addDidoxFile(id, file, dto, req.payload);
+  }
+
+  @Get(':id/didox/check')
+  @ApiOperation({ summary: "Didox: yuklashdan oldin dublikatni tekshirish (raqam / sana / Didox ID)" })
+  async checkDidox(@Param('id', ParseIntPipe) id: number, @Query(formPipe) dto: DidoxCheckDto) {
+    return { duplicate: await this.service.findDidoxDuplicate(dto, id) };
   }
 
   @Patch('didox/:fileId')

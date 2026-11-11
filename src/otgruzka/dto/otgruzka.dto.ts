@@ -197,6 +197,40 @@ export class DidoxFileDto {
 
   @ApiPropertyOptional() @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(1000)
   comment?: string | null;
+
+  @ApiPropertyOptional({ description: 'Didox.uz hujjat ID (PDF tepasida)' })
+  @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(64)
+  doc_id?: string | null;
+
+  @ApiPropertyOptional({ description: 'Ishonchnoma amal qilish muddati' })
+  @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsDateString()
+  poa_valid_until?: string | null;
+
+  @ApiPropertyOptional({ description: 'Ishonchnoma bergan korxona' })
+  @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(255)
+  poa_company?: string | null;
+
+  @ApiPropertyOptional({ description: 'Ishonchnoma bergan korxona INN' })
+  @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(32)
+  poa_inn?: string | null;
+}
+
+// Yuklashdan oldin dublikatni tekshirish (fayl o'qilgandan keyin darhol)
+export class DidoxCheckDto {
+  @ApiPropertyOptional({ enum: DIDOX_KINDS }) @IsOptional() @IsIn(DIDOX_KINDS as unknown as string[])
+  kind?: DidoxKind;
+
+  @ApiPropertyOptional() @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(64)
+  invoice_number?: string | null;
+
+  @ApiPropertyOptional() @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsDateString()
+  invoice_date?: string | null;
+
+  @ApiPropertyOptional() @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(64)
+  doc_id?: string | null;
+
+  @ApiPropertyOptional() @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(32)
+  poa_inn?: string | null;
 }
 
 export class SkladCheckDto {

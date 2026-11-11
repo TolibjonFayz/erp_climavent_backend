@@ -18,10 +18,16 @@ export interface OtgruzkaDidoxFileAtr {
   invoice_date?: string | null;
   comment?: string | null;
   uploaded_by?: number | null;
+  doc_id?: string | null;
+  poa_valid_until?: string | null;
+  poa_company?: string | null;
+  poa_inn?: string | null;
 }
 
 // Didox: otgruzka kartasiga biriktirilgan schyot-faktura va ishonchnoma fayllari (Cloudflare R2'da).
 // `amount` — fayl (schyot-faktura) ichida ko'rsatilgan summa, yuklashda kiritiladi.
+// Ishonchnomada: invoice_number — raqami, invoice_date — berilgan sana, poa_valid_until — amal qilish muddati,
+// poa_company / poa_inn — ishonchnoma bergan korxona. doc_id — Didox.uz hujjat ID'si (dublikatga qarshi).
 @Table({ tableName: 'otgruzka_didox_files', timestamps: true })
 export class OtgruzkaDidoxFile extends Model<OtgruzkaDidoxFile, OtgruzkaDidoxFileAtr> {
   @Column({ type: DataType.INTEGER, autoIncrement: true, primaryKey: true })
@@ -60,6 +66,18 @@ export class OtgruzkaDidoxFile extends Model<OtgruzkaDidoxFile, OtgruzkaDidoxFil
 
   @Column({ type: DataType.TEXT, allowNull: true })
   declare comment: string | null;
+
+  @Column({ type: DataType.STRING(64), allowNull: true })
+  declare doc_id: string | null;
+
+  @Column({ type: DataType.DATEONLY, allowNull: true })
+  declare poa_valid_until: string | null;
+
+  @Column({ type: DataType.STRING, allowNull: true })
+  declare poa_company: string | null;
+
+  @Column({ type: DataType.STRING(32), allowNull: true })
+  declare poa_inn: string | null;
 
   @ForeignKey(() => User)
   @Column({ type: DataType.INTEGER, allowNull: true })

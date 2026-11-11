@@ -202,6 +202,10 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS items JSONB`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_check VARCHAR(16)`);
       await this.sequelize.query(`ALTER TABLE otgruzka_didox_files ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'invoice'`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_didox_files ADD COLUMN IF NOT EXISTS doc_id VARCHAR(64)`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_didox_files ADD COLUMN IF NOT EXISTS poa_valid_until DATE`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_didox_files ADD COLUMN IF NOT EXISTS poa_company VARCHAR(255)`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_didox_files ADD COLUMN IF NOT EXISTS poa_inn VARCHAR(32)`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_requested_at TIMESTAMPTZ`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_checked_at TIMESTAMPTZ`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_checked_by INTEGER`);
@@ -1387,7 +1391,84 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     if (dto.invoice_number !== undefined) out.invoice_number = dto.invoice_number?.trim() || null;
     if (dto.invoice_date !== undefined) out.invoice_date = dto.invoice_date || null;
     if (dto.comment !== undefined) out.comment = dto.comment?.trim() || null;
+    if (dto.doc_id !== undefined) out.doc_id = dto.doc_id?.trim().toLowerCase() || null;
+    if (dto.poa_valid_until !== undefined) out.poa_valid_until = dto.poa_valid_until || null;
+    if (dto.poa_company !== undefined) out.poa_company = dto.poa_company?.trim() || null;
+    if (dto.poa_inn !== undefined) out.poa_inn = dto.poa_inn?.replace(/\D/g, '') || null;
     return out;
+  }
+
+  /**
+   * Bir xil hujjat ikki marta yuklanmasin:
+   *  - Didox ID bir xil bo'lsa — har doim dublikat;
+   *  - schyot-faktura: raqami bir xil (sana ham bir xil yoki biri ko'rsatilmagan) — butun bazada;
+   *  - ishonchnoma: raqami bir xil va beruvchi korxona (INN) bir xil, INN bo'lmasa — shu kartada.
+   */
+  async findDidoxDuplicate(
+    q: { kind?: string; invoice_number?: string | null; invoice_date?: string | null; doc_id?: string | null; poa_inn?: string | null },
+    orderId?: number,
+    excludeId?: number,
+  ) {
+    const kind = q.kind === 'poa' ? 'poa' : 'invoice';
+    const num = q.invoice_number?.trim();
+    const docId = q.doc_id?.trim().toLowerCase();
+    const inn = q.poa_inn?.replace(/\D/g, '');
+    const or: any[] = [];
+    if (docId) or.push({ doc_id: docId });
+    if (num) {
+      const byNum: any = {
+        kind,
+        [Op.and]: [this.sequelize.where(this.sequelize.fn('LOWER', this.sequelize.fn('TRIM', this.sequelize.col('OtgruzkaDidoxFile.invoice_number'))), num.toLowerCase())],
+      };
+      if (kind === 'invoice' && q.invoice_date) byNum.invoice_date = { [Op.or]: [q.invoice_date, null] };
+      if (kind === 'poa') {
+        if (inn) byNum.poa_inn = { [Op.or]: [inn, null] };
+        else if (orderId) byNum.order_id = orderId;
+        else return null;
+      }
+      or.push(byNum);
+    }
+    if (!or.length) return null;
+    const f = await this.didoxRepo.findOne({
+      where: { [Op.or]: or, ...(excludeId ? { id: { [Op.ne]: excludeId } } : {}) },
+      include: [{ model: OtgruzkaOrder, as: 'order', attributes: ['id', 'dogovor_number', 'client_name'] }],
+      order: [['id', 'ASC']],
+    });
+    if (!f) return null;
+    return {
+      id: f.id,
+      kind: f.kind,
+      order_id: f.order_id,
+      dogovor_number: f.order?.dogovor_number ?? null,
+      client_name: f.order?.client_name ?? null,
+      file_name: f.file_name,
+      invoice_number: f.invoice_number,
+      invoice_date: f.invoice_date,
+      same_doc: !!docId && f.doc_id === docId,
+    };
+  }
+
+  private async assertNoDidoxDuplicate(
+    q: Parameters<OtgruzkaService['findDidoxDuplicate']>[0],
+    orderId?: number,
+    excludeId?: number,
+  ) {
+    const dup = await this.findDidoxDuplicate(q, orderId, excludeId);
+    if (!dup) return;
+    const what = dup.kind === 'poa' ? 'Ishonchnoma' : 'Schyot-faktura';
+    const where = dup.order_id === orderId ? 'shu kartada' : `№ ${dup.dogovor_number ?? dup.order_id} (${dup.client_name ?? '—'}) kartasida`;
+    throw otError(
+      ConflictException,
+      dup.kind === 'poa' ? 'OT_POA_DUPLICATE' : 'OT_DIDOX_DUPLICATE',
+      `${what} № ${dup.invoice_number ?? '—'} allaqachon yuklangan: ${where}`,
+      {
+        number: dup.invoice_number ?? '—',
+        dogovor: dup.dogovor_number ?? String(dup.order_id),
+        client: dup.client_name ?? '—',
+        file: dup.file_name,
+        same_order: dup.order_id === orderId,
+      },
+    );
   }
 
   async addDidoxFile(orderId: number, file: Express.Multer.File, dto: DidoxFileDto, payload: AuthPayload) {
@@ -1400,6 +1481,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     }
     // Multer fayl nomini latin1 sifatida beradi — kirill nomlar buzilmasin
     const name = Buffer.from(file.originalname || 'file', 'latin1').toString('utf8');
+    await this.assertNoDidoxDuplicate({ ...dto, kind: dto.kind || 'invoice' }, o.id);
     const key = this.r2.buildKey(`otgruzka/${o.id}/didox`, name);
     await this.r2.upload(key, file.buffer, file.mimetype);
     try {
@@ -1451,6 +1533,13 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     const f = await this.findDidox(id);
     const fields = this.didoxFields(dto);
     if (f.kind === 'poa') delete fields.amount;
+    const pick = (k: 'invoice_number' | 'invoice_date' | 'doc_id' | 'poa_inn') =>
+      (k in fields ? fields[k] : f[k]) as string | null;
+    await this.assertNoDidoxDuplicate(
+      { kind: f.kind, invoice_number: pick('invoice_number'), invoice_date: pick('invoice_date'), doc_id: pick('doc_id'), poa_inn: pick('poa_inn') },
+      f.order_id,
+      f.id,
+    );
     await f.update(fields);
     return this.detail(f.order_id);
   }

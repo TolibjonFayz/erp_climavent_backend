@@ -196,8 +196,8 @@ export class OtgruzkaController {
 
   @Patch('didox/:fileId')
   @ApiOperation({ summary: "Didox fayli: summa, raqam, sana, izohni o'zgartirish" })
-  updateDidox(@Param('fileId', ParseIntPipe) fileId: number, @Body(formPipe) dto: DidoxFileDto) {
-    return this.service.updateDidoxFile(fileId, dto);
+  updateDidox(@Param('fileId', ParseIntPipe) fileId: number, @Body(formPipe) dto: DidoxFileDto, @Req() req: RequestWithPayload) {
+    return this.service.updateDidoxFile(fileId, dto, req.payload);
   }
 
   @Delete('didox/:fileId')

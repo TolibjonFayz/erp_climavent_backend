@@ -3,7 +3,8 @@ import { User } from 'src/users/models/user.model';
 import { OtgruzkaOrder } from './otgruzka-order.model';
 
 // invoice — schyot-faktura (summasi bilan), poa — ishonchnoma (summasiz)
-export const DIDOX_KINDS = ['invoice', 'poa'] as const;
+// contract — Didox orqali yuborilgan (imzolangan) shartnoma fayli
+export const DIDOX_KINDS = ['invoice', 'poa', 'contract'] as const;
 export type DidoxKind = (typeof DIDOX_KINDS)[number];
 
 export interface OtgruzkaDidoxFileAtr {

@@ -215,6 +215,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       this.logger.error(`otgruzka_orders ustuni qo'shilmadi: ${e?.message}`);
     }
     this.backfillDogovorPayments().catch((e) => this.logger.warn(`Shartnoma to'lovlari ko'chirilmadi: ${e?.message}`));
+    this.backfillInvoiceNumbers().catch((e) => this.logger.warn(`Schyot-faktura raqamlari yozilmadi: ${e?.message}`));
     if (process.env.OTGRUZKA_SYNC_ENABLED === 'false') {
       this.logger.log("OTGRUZKA_SYNC_ENABLED=false — avtomatik sinxron o'chirilgan");
       return;
@@ -1555,6 +1556,50 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
    * Oddiy tahrir yo'li bilan — tarixga yoziladi, ikki tomonlama rejimda jadvalga ham boradi.
    * false — yozib bo'lmadi (masalan jadval asosiy rejimda).
    */
+  /**
+   * Bir martalik to'ldirish: avval yuklangan schyot-fakturalar raqami kartadagi "Номер счёт-фактуры"da
+   * (va jadvalda) bo'lmasa — qo'shiladi. Har ishga tushganda tekshiradi, yetishmaganini yozadi.
+   * Jadvalga yozib bo'lmasa (masalan jadval asosiy rejimda) — to'xtaydi, keyingi ishga tushishda qayta urinadi.
+   */
+  private async backfillInvoiceNumbers() {
+    const files = await this.didoxRepo.findAll({
+      where: { kind: 'invoice', invoice_number: { [Op.ne]: null } },
+      attributes: ['order_id', 'invoice_number', 'uploaded_by'],
+      order: [['invoice_date', 'ASC NULLS LAST'], ['id', 'ASC']],
+    });
+    const byOrder = new Map<number, { numbers: string[]; user: number | null }>();
+    for (const f of files) {
+      const num = f.invoice_number?.trim();
+      if (!num) continue;
+      const g = byOrder.get(f.order_id) ?? { numbers: [], user: f.uploaded_by ?? null };
+      g.numbers.push(num);
+      byOrder.set(f.order_id, g);
+    }
+    const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
+    let written = 0;
+    for (const [orderId, g] of byOrder) {
+      const o = await this.orderRepo.findByPk(orderId);
+      if (!o) continue;
+      const list = String(o.invoice_numbers || '')
+        .split(/[,;\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const missing = [...new Set(g.numbers)].filter((n) => !list.some((s) => norm(s) === norm(n)));
+      if (!missing.length) continue;
+      try {
+        await this.update(o.id, { invoice_numbers: [...list, ...missing].join(', ') } as UpdateOrderDto, {
+          user_id: g.user as number,
+          is_admin: false,
+        });
+        written++;
+      } catch (e: any) {
+        this.logger.warn(`Schyot-faktura raqamlari jadvalga yozilmadi (karta ${o.id}): ${e?.message} — keyingi ishga tushishda qayta urinadi`);
+        break;
+      }
+    }
+    if (written) this.logger.log(`Schyot-faktura raqamlari ${written} ta kartaga yozildi`);
+  }
+
   private async syncInvoiceNumbers(orderId: number, payload: AuthPayload, change: { add?: string | null; remove?: string | null }) {
     const add = change.add?.trim() || null;
     const remove = change.remove?.trim() || null;

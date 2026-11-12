@@ -206,6 +206,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       await this.sequelize.query(`ALTER TABLE otgruzka_didox_files ADD COLUMN IF NOT EXISTS poa_valid_until DATE`);
       await this.sequelize.query(`ALTER TABLE otgruzka_didox_files ADD COLUMN IF NOT EXISTS poa_company VARCHAR(255)`);
       await this.sequelize.query(`ALTER TABLE otgruzka_didox_files ADD COLUMN IF NOT EXISTS poa_inn VARCHAR(32)`);
+      await this.sequelize.query(`ALTER TABLE otgruzka_didox_files ADD COLUMN IF NOT EXISTS items JSONB`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_requested_at TIMESTAMPTZ`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_checked_at TIMESTAMPTZ`);
       await this.sequelize.query(`ALTER TABLE otgruzka_orders ADD COLUMN IF NOT EXISTS sklad_checked_by INTEGER`);
@@ -1400,6 +1401,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     if (dto.poa_valid_until !== undefined) out.poa_valid_until = dto.poa_valid_until || null;
     if (dto.poa_company !== undefined) out.poa_company = dto.poa_company?.trim() || null;
     if (dto.poa_inn !== undefined) out.poa_inn = dto.poa_inn?.replace(/\D/g, '') || null;
+    if (dto.items !== undefined) out.items = dto.items?.length ? dto.items : null;
     return out;
   }
 

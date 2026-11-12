@@ -176,6 +176,30 @@ const toNum = ({ value }: { value: unknown }) =>
   value === '' || value === null || value === undefined ? null : Number(String(value).replace(/\s/g, '').replace(',', '.'));
 const emptyToNull = ({ value }: { value: unknown }) => (value === '' ? null : value);
 
+// Schyot-faktura tovarlari: JSON matn yoki massiv → tozalangan ro'yxat (noto'g'ri qatorlar tashlanadi)
+const toDidoxItems = ({ value }: { value: unknown }) => {
+  if (value === '' || value === null || value === undefined) return null;
+  let list: unknown = value;
+  if (typeof value === 'string') {
+    try {
+      list = JSON.parse(value);
+    } catch {
+      return 'invalid';
+    }
+  }
+  if (!Array.isArray(list)) return 'invalid';
+  const num = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number(v));
+  return list
+    .slice(0, 300)
+    .map((i: any) => ({
+      name: String(i?.name ?? '').trim().slice(0, 500),
+      qty: num(i?.qty) ?? 0,
+      unit: i?.unit ? String(i.unit).slice(0, 32) : null,
+      total: num(i?.total),
+    }))
+    .filter((i) => i.name && Number.isFinite(i.qty) && (i.total === null || Number.isFinite(i.total)));
+};
+
 export class DidoxFileDto {
   @ApiPropertyOptional({ enum: DIDOX_KINDS, description: "invoice — schyot-faktura, poa — ishonchnoma (faqat yuklashda)" })
   @IsOptional()
@@ -213,6 +237,13 @@ export class DidoxFileDto {
   @ApiPropertyOptional({ description: 'Ishonchnoma bergan korxona INN' })
   @IsOptional() @Transform(emptyToNull) @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(32)
   poa_inn?: string | null;
+
+  @ApiPropertyOptional({ description: "Schyot-faktura tovarlari (JSON massiv: name, qty, unit, total) — multipart'da matn bo'lib keladi" })
+  @IsOptional()
+  @Transform(toDidoxItems)
+  @ValidateIf((_, v) => v !== null)
+  @IsArray()
+  items?: Array<{ name: string; qty: number; unit?: string | null; total?: number | null }> | null;
 }
 
 // Yuklashdan oldin dublikatni tekshirish (fayl o'qilgandan keyin darhol)

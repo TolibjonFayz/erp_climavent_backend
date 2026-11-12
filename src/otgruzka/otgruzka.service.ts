@@ -769,20 +769,24 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     const didox = (await this.didoxRepo.findAll({
       attributes: [
         'order_id',
-        [this.sequelize.literal(`COUNT(*) FILTER (WHERE kind <> 'poa')`), 'n'],
+        [this.sequelize.literal(`COUNT(*) FILTER (WHERE kind = 'invoice')`), 'n'],
+        [this.sequelize.literal(`COUNT(*) FILTER (WHERE kind = 'contract')`), 'contract'],
         [this.sequelize.literal(`COUNT(*) FILTER (WHERE kind = 'poa')`), 'poa'],
-        [this.sequelize.literal(`COALESCE(SUM(amount) FILTER (WHERE kind <> 'poa'), 0)`), 'sum'],
+        [this.sequelize.literal(`COALESCE(SUM(amount) FILTER (WHERE kind = 'invoice'), 0)`), 'sum'],
       ],
       group: ['order_id'],
       raw: true,
-    })) as unknown as Array<{ order_id: number; n: string; poa: string; sum: string }>;
-    const didoxBy = new Map(didox.map((d) => [d.order_id, { n: Number(d.n), poa: Number(d.poa), sum: r2(Number(d.sum) || 0) }]));
+    })) as unknown as Array<{ order_id: number; n: string; poa: string; contract: string; sum: string }>;
+    const didoxBy = new Map(
+      didox.map((d) => [d.order_id, { n: Number(d.n), poa: Number(d.poa), contract: Number(d.contract), sum: r2(Number(d.sum) || 0) }]),
+    );
     return orders.map((o) => ({
       ...this.view(o),
       lines_count: lineCount.get(o.id) || 0,
       didox_files_count: didoxBy.get(o.id)?.n || 0,
       didox_files_sum: didoxBy.get(o.id)?.sum || 0,
       didox_poa_count: didoxBy.get(o.id)?.poa || 0,
+      didox_contract_count: didoxBy.get(o.id)?.contract || 0,
     }));
   }
 
@@ -867,7 +871,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       const { items: _skip, ...dog } = view.dogovor;
       view.dogovor = dog;
     }
-    const invoices = didox_files.filter((f) => f.kind !== 'poa');
+    const invoices = didox_files.filter((f) => (f.kind || 'invoice') === 'invoice');
     const didox_files_sum = r2(invoices.reduce((a, f) => a + (Number(f.amount) || 0), 0));
     return {
       ...view,
@@ -879,7 +883,8 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       didox_files,
       didox_files_count: invoices.length,
       didox_files_sum,
-      didox_poa_count: didox_files.length - invoices.length,
+      didox_poa_count: didox_files.filter((f) => f.kind === 'poa').length,
+      didox_contract_count: didox_files.filter((f) => f.kind === 'contract').length,
       storage_ready: this.r2.isConfigured,
     };
   }
@@ -1409,7 +1414,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     orderId?: number,
     excludeId?: number,
   ) {
-    const kind = q.kind === 'poa' ? 'poa' : 'invoice';
+    const kind = q.kind === 'poa' || q.kind === 'contract' ? q.kind : 'invoice';
     const num = q.invoice_number?.trim();
     const docId = q.doc_id?.trim().toLowerCase();
     const inn = q.poa_inn?.replace(/\D/g, '');
@@ -1425,6 +1430,11 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
         if (inn) byNum.poa_inn = { [Op.or]: [inn, null] };
         else if (orderId) byNum.order_id = orderId;
         else return null;
+      }
+      // Shartnoma fayli: raqami shu kartada takrorlanmasin
+      if (kind === 'contract') {
+        if (!orderId) return null;
+        byNum.order_id = orderId;
       }
       or.push(byNum);
     }
@@ -1455,11 +1465,11 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
   ) {
     const dup = await this.findDidoxDuplicate(q, orderId, excludeId);
     if (!dup) return;
-    const what = dup.kind === 'poa' ? 'Ishonchnoma' : 'Schyot-faktura';
+    const what = dup.kind === 'poa' ? 'Ishonchnoma' : dup.kind === 'contract' ? 'Shartnoma' : 'Schyot-faktura';
     const where = dup.order_id === orderId ? 'shu kartada' : `№ ${dup.dogovor_number ?? dup.order_id} (${dup.client_name ?? '—'}) kartasida`;
     throw otError(
       ConflictException,
-      dup.kind === 'poa' ? 'OT_POA_DUPLICATE' : 'OT_DIDOX_DUPLICATE',
+      dup.kind === 'poa' ? 'OT_POA_DUPLICATE' : dup.kind === 'contract' ? 'OT_CONTRACT_DUPLICATE' : 'OT_DIDOX_DUPLICATE',
       `${what} № ${dup.invoice_number ?? '—'} allaqachon yuklangan: ${where}`,
       {
         number: dup.invoice_number ?? '—',
@@ -1494,8 +1504,8 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
         uploaded_by: payload.user_id,
         ...this.didoxFields(dto),
         kind: dto.kind || 'invoice',
-        // Ishonchnomada summa bo'lmaydi
-        ...(dto.kind === 'poa' ? { amount: null } : {}),
+        // Ishonchnoma va shartnoma faylida summa bo'lmaydi
+        ...(dto.kind === 'poa' || dto.kind === 'contract' ? { amount: null } : {}),
       } as any);
       await this.noteRepo.create({
         order_id: o.id,
@@ -1511,7 +1521,9 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     // Ishonchnoma yuklandi — Didox'dagi "Ishonchnoma: bor" belgisi o'zi yoqiladi (rasmiy shartnomalarda).
     // Oddiy tahrir yo'li bilan: tarixga yoziladi va ikki tomonlama rejimda jadvalga ham boradi.
     // Yoqib bo'lmasa (jadval asosiy, skript ulanmagan) — fayl baribir saqlanadi, frontend ogohlantiradi.
+    // Shartnoma fayli yuklansa — "Договор: есть" (Didox orqali yuborilgan) xuddi shunday yoqiladi.
     let poa_flag_skipped = false;
+    let contract_flag_skipped = false;
     if (dto.kind === 'poa' && isOfficial(o.series) && o.didox_poa !== true) {
       try {
         await this.update(o.id, { didox_poa: true } as UpdateOrderDto, payload);
@@ -1520,7 +1532,57 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
         this.logger.warn(`Karta ${o.id}: ishonchnoma belgisi yoqilmadi — ${e?.message}`);
       }
     }
-    return { ...(await this.detail(o.id)), poa_flag_skipped };
+    if (dto.kind === 'contract' && isOfficial(o.series) && o.didox_contract !== true) {
+      try {
+        await this.update(o.id, { didox_contract: true } as UpdateOrderDto, payload);
+      } catch (e: any) {
+        contract_flag_skipped = true;
+        this.logger.warn(`Karta ${o.id}: shartnoma belgisi yoqilmadi — ${e?.message}`);
+      }
+    }
+    // Schyot-faktura raqami kartadagi "Номер счёт-фактуры"ga (va jadvalga) qo'shiladi
+    const invoice_sync_skipped =
+      (dto.kind || 'invoice') === 'invoice' && !(await this.syncInvoiceNumbers(o.id, payload, { add: dto.invoice_number }));
+    return { ...(await this.detail(o.id)), poa_flag_skipped, contract_flag_skipped, invoice_sync_skipped };
+  }
+
+  /**
+   * Kartadagi "Номер счёт-фактуры" (jadvaldagi "счет фактура номер") — ERP'ga yuklangan
+   * schyot-fakturalar raqamlari bilan to'ldiriladi. Jadvalda qo'lda yozilgan raqamlar saqlanadi:
+   * yangi raqam qo'shiladi, o'chirilgan fayl raqami (boshqa faylda qolmagan bo'lsa) olib tashlanadi.
+   * Oddiy tahrir yo'li bilan — tarixga yoziladi, ikki tomonlama rejimda jadvalga ham boradi.
+   * false — yozib bo'lmadi (masalan jadval asosiy rejimda).
+   */
+  private async syncInvoiceNumbers(orderId: number, payload: AuthPayload, change: { add?: string | null; remove?: string | null }) {
+    const add = change.add?.trim() || null;
+    const remove = change.remove?.trim() || null;
+    if (!add && !remove) return true;
+    const o = await this.findOrder(orderId);
+    const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
+    let list = String(o.invoice_numbers || '')
+      .split(/[,;\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (remove && norm(remove) !== norm(add || '')) {
+      const still = await this.didoxRepo.count({
+        where: {
+          order_id: orderId,
+          kind: 'invoice',
+          [Op.and]: [this.sequelize.where(this.sequelize.fn('LOWER', this.sequelize.fn('TRIM', this.sequelize.col('invoice_number'))), remove.toLowerCase())],
+        },
+      });
+      if (!still) list = list.filter((s) => norm(s) !== norm(remove));
+    }
+    if (add && !list.some((s) => norm(s) === norm(add))) list.push(add);
+    const next = list.join(', ') || null;
+    if ((o.invoice_numbers || null) === next) return true;
+    try {
+      await this.update(o.id, { invoice_numbers: next } as UpdateOrderDto, payload);
+      return true;
+    } catch (e: any) {
+      this.logger.warn(`Karta ${o.id}: schyot-faktura raqami yozilmadi — ${e?.message}`);
+      return false;
+    }
   }
 
   private async findDidox(id: number) {
@@ -1529,10 +1591,11 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     return f;
   }
 
-  async updateDidoxFile(id: number, dto: DidoxFileDto) {
+  async updateDidoxFile(id: number, dto: DidoxFileDto, payload: AuthPayload) {
     const f = await this.findDidox(id);
     const fields = this.didoxFields(dto);
-    if (f.kind === 'poa') delete fields.amount;
+    if (f.kind === 'poa' || f.kind === 'contract') delete fields.amount;
+    const oldNumber = f.invoice_number;
     const pick = (k: 'invoice_number' | 'invoice_date' | 'doc_id' | 'poa_inn') =>
       (k in fields ? fields[k] : f[k]) as string | null;
     await this.assertNoDidoxDuplicate(
@@ -1541,7 +1604,11 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
       f.id,
     );
     await f.update(fields);
-    return this.detail(f.order_id);
+    let invoice_sync_skipped = false;
+    if ((f.kind || 'invoice') === 'invoice' && 'invoice_number' in fields && (oldNumber || null) !== (f.invoice_number || null)) {
+      invoice_sync_skipped = !(await this.syncInvoiceNumbers(f.order_id, payload, { add: f.invoice_number, remove: oldNumber }));
+    }
+    return { ...(await this.detail(f.order_id)), invoice_sync_skipped };
   }
 
   // O'chirish: yuklagan xodim yoki admin
@@ -1560,7 +1627,11 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     } as any);
     await f.destroy();
     await this.r2.remove(f.file_key);
-    return this.detail(orderId);
+    let invoice_sync_skipped = false;
+    if ((f.kind || 'invoice') === 'invoice' && f.invoice_number) {
+      invoice_sync_skipped = !(await this.syncInvoiceNumbers(orderId, payload, { remove: f.invoice_number }));
+    }
+    return { ...(await this.detail(orderId)), invoice_sync_skipped };
   }
 
   async didoxFileLink(id: number, mode: 'download' | 'inline' = 'inline') {

@@ -29,6 +29,8 @@ export interface OtgruzkaItem {
   unit?: string | null;
   qty: number;
   price: number;
+  /** Qo'lda kiritilgan otgruzka qilingan soni (bo'lmasa — schyot-fakturalardan hisoblanadi) */
+  shipped?: number | null;
 }
 
 export interface OtgruzkaOrderAtr {

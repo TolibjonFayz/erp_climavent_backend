@@ -24,6 +24,7 @@ import {
   SyncDto,
   UpdateItemDto,
   UpdateSettingsDto,
+  AutoSyncDto,
 } from './dto/sklad.dto';
 import { AuthPayload, SkladService } from './sklad.service';
 import { SheetFormatError } from './sheet-parser';
@@ -164,6 +165,19 @@ export class SkladController {
   async removeSource(@Param('id', ParseIntPipe) id: number, @Req() req: RequestWithPayload) {
     await this.skladService.assertAdmin(req.payload);
     return this.skladService.removeSource(id);
+  }
+
+  @Get('sync-log')
+  @ApiOperation({ summary: "Sinxronlar tarixi: vaqt, avtomatik/qo'lda, kim, natija" })
+  syncLog() {
+    return this.skladService.syncLog();
+  }
+
+  @Patch('auto-sync')
+  @ApiOperation({ summary: "Avtomatik sinxron: yoqish/o'chirish va oralig'i (admin)" })
+  async autoSync(@Body() dto: AutoSyncDto, @Req() req: RequestWithPayload) {
+    await this.skladService.assertAdmin(req.payload);
+    return this.skladService.setAutoSync(dto);
   }
 
   @Post('sync')

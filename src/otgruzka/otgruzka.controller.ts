@@ -11,12 +11,14 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
   ValidationPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { ApiBody, ApiConsumes, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JwtGuard } from 'src/guards/jwt.guard';
 import {
@@ -188,6 +190,20 @@ export class OtgruzkaController {
     return this.service.addDidoxFile(id, file, dto, req.payload);
   }
 
+  @Post('by-dogovor/:dogovorId/didox')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_DIDOX_FILE } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: "Shartnoma bo'limidagi Didox PDF — bog'langan otgruzka kartasiga shartnoma fayli bo'lib biriktiriladi" })
+  addDidoxByDogovor(
+    @Param('dogovorId', ParseIntPipe) dogovorId: number,
+    @UploadedFile() file: Express.Multer.File,
+    @Body(formPipe) dto: DidoxFileDto,
+    @Req() req: RequestWithPayload,
+  ) {
+    if (!file?.buffer) throw new BadRequestException({ message: 'Fayl yuborilmadi', code: 'OT_DIDOX_NO_FILE' });
+    return this.service.addDidoxByDogovor(dogovorId, file, dto, req.payload);
+  }
+
   @Get(':id/didox/check')
   @ApiOperation({ summary: "Didox: yuklashdan oldin dublikatni tekshirish (raqam / sana / Didox ID)" })
   async checkDidox(@Param('id', ParseIntPipe) id: number, @Query(formPipe) dto: DidoxCheckDto) {
@@ -204,6 +220,15 @@ export class OtgruzkaController {
   @ApiOperation({ summary: "Didox faylini o'chirish (yuklagan xodim yoki admin)" })
   removeDidox(@Param('fileId', ParseIntPipe) fileId: number, @Req() req: RequestWithPayload) {
     return this.service.removeDidoxFile(fileId, req.payload);
+  }
+
+  @Get('didox/:fileId/file')
+  @ApiOperation({ summary: "Didox fayli tarkibi (PDF'ni qayta o'qish uchun)" })
+  async didoxFile(@Param('fileId', ParseIntPipe) fileId: number, @Res() res: Response) {
+    const { file, buffer } = await this.service.didoxFileContent(fileId);
+    res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(buffer);
   }
 
   @Get('didox/:fileId/link')

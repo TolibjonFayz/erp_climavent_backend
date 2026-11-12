@@ -8,7 +8,9 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
 } from 'class-validator';
 
 // DIQQAT: global ValidationPipe `whitelist: true` — dekoratorsiz maydon jimgina
@@ -176,6 +178,19 @@ export class SyncDto {
   @IsOptional()
   @IsInt()
   source_id?: number;
+}
+
+export class AutoSyncDto {
+  @ApiProperty({ example: true, description: "Avtomatik sinxron yoqilgan (false — faqat qo'lda)" })
+  @IsBoolean()
+  enabled: boolean;
+
+  @ApiPropertyOptional({ example: 30, description: 'Har necha daqiqada (5–1440)' })
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  @Max(1440)
+  interval_min?: number;
 }
 
 export class UpdateSettingsDto {

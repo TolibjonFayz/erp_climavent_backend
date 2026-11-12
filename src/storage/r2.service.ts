@@ -13,6 +13,16 @@ import { randomUUID } from 'crypto';
 // MUHIM: bucket OMMAVIY EMAS. Biznes hujjatlari havolani bilgan har kimga
 // ochiq bo'lmasligi kerak, shuning uchun yuklab olish har safar qisqa
 // muddatli presigned havola orqali beriladi (backend avval huquqni tekshiradi).
+// Brauzerda ochiladigan turlar (inline havola uchun)
+const INLINE_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  txt: 'text/plain; charset=utf-8',
+};
+
 @Injectable()
 export class R2Service {
   private readonly logger = new Logger(R2Service.name);
@@ -108,9 +118,24 @@ export class R2Service {
   }
 
   // Ko'rish uchun (PDF/rasm brauzerda ochilsin) — yuklab olishga majburlamaydi
-  async getInlineUrl(key: string, expiresIn = 300): Promise<string> {
-    const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
+  // `name` berilsa — brauzer faylni ochadi (yuklab olmaydi): inline + turi kengaytmadan
+  async getInlineUrl(key: string, expiresIn = 300, name?: string): Promise<string> {
+    const ext = /\.([a-z0-9]{1,5})$/i.exec(name || '')?.[1]?.toLowerCase();
+    const type = ext ? INLINE_TYPES[ext] : undefined;
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ...(name ? { ResponseContentDisposition: `inline; filename*=UTF-8''${encodeURIComponent(name)}` } : {}),
+      ...(type ? { ResponseContentType: type } : {}),
+    });
     return getSignedUrl(this.getClient(), command, { expiresIn });
+  }
+
+  /** Fayl tarkibi (masalan PDF'ni serverda yoki brauzerda qayta o'qish uchun) */
+  async getObjectBuffer(key: string): Promise<Buffer> {
+    const res = await this.getClient().send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    const bytes = await (res.Body as any).transformToByteArray();
+    return Buffer.from(bytes);
   }
 
   // Fayl o'chirilsa R2 da ham qolib ketmasin.

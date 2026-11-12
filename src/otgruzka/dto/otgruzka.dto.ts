@@ -40,6 +40,10 @@ export class OrderItemDto {
 
   @ApiProperty() @IsNumber() @Min(0)
   price: number = 0;
+
+  @ApiPropertyOptional({ description: "Qo'lda: otgruzka qilingan soni (null — fakturalardan avtomatik)" })
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsNumber() @Min(0)
+  shipped?: number | null;
 }
 
 // Mirror rejimda faqat `next_action*` va `items` qabul qilinadi; qolganlari — jadval bilan birga

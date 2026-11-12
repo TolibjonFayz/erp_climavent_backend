@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
   OnApplicationBootstrap,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { Op, QueryTypes, WhereOptions } from 'sequelize';
@@ -117,8 +118,16 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
+// Avtomatik sinxron (Google Sheets → ERP): standart — o'chiq, har 30 daqiqada
+const AUTO_SYNC_DEFAULT = { enabled: false, interval_min: 30, last_auto_at: null as string | null };
+const SYNC_LOG_MAX = 100;
+const AUTO_TICK_MS = 60_000;
+
 @Injectable()
-export class SkladService implements OnApplicationBootstrap {
+export class SkladService implements OnApplicationBootstrap, OnModuleDestroy {
+  private autoTimer: NodeJS.Timeout | null = null;
+  private syncing = false;
+
   private readonly logger = new Logger(SkladService.name);
 
   constructor(
@@ -144,6 +153,55 @@ export class SkladService implements OnApplicationBootstrap {
     } catch (e: any) {
       this.logger.error(`sklad_items SAP ustunlari qo'shilmadi: ${e?.message}`);
     }
+    // Avtomatik sinxron: har daqiqada tekshiriladi, vaqti kelsa ishga tushadi (SKLAD_AUTO_SYNC=false — butunlay o'chiq)
+    if (process.env.SKLAD_AUTO_SYNC !== 'false') {
+      this.autoTimer = setInterval(() => this.autoTick().catch((e) => this.logger.warn(`Sklad auto sync: ${e?.message}`)), AUTO_TICK_MS);
+    }
+  }
+
+  onModuleDestroy() {
+    if (this.autoTimer) clearInterval(this.autoTimer);
+  }
+
+  // ─── Avtomatik / qo'lda sinxron va tarix ────────────────────────────
+  async getAutoSync() {
+    const row = await this.settingRepo.findByPk('auto_sync');
+    return { ...AUTO_SYNC_DEFAULT, ...(row?.value || {}) };
+  }
+
+  async setAutoSync(dto: { enabled: boolean; interval_min?: number }) {
+    const cur = await this.getAutoSync();
+    await this.settingRepo.upsert({
+      key: 'auto_sync',
+      value: { ...cur, enabled: !!dto.enabled, interval_min: dto.interval_min ?? cur.interval_min },
+    });
+    return this.getSettings();
+  }
+
+  private async autoTick() {
+    if (this.syncing || (await this.getMode()) !== 'mirror') return;
+    const auto = await this.getAutoSync();
+    if (!auto.enabled) return;
+    const last = auto.last_auto_at ? new Date(auto.last_auto_at).getTime() : 0;
+    if (Date.now() - last < auto.interval_min * 60_000) return;
+    await this.settingRepo.upsert({ key: 'auto_sync', value: { ...auto, last_auto_at: new Date().toISOString() } });
+    await this.sync(undefined, { user_id: null as unknown as number, is_admin: true }, 'auto');
+  }
+
+  /** Sinxronlar tarixi (oxirgisi birinchi): vaqt, avto/qo'lda, kim, natija */
+  async syncLog() {
+    const row = await this.settingRepo.findByPk('sync_log');
+    const list: any[] = Array.isArray(row?.value) ? row.value : [];
+    const ids = [...new Set(list.map((e) => e.user_id).filter(Boolean))];
+    const users = ids.length ? await this.userRepo.findAll({ where: { id: ids }, attributes: ['id', 'firstname', 'lastname', 'username'] }) : [];
+    const nameOf = new Map(users.map((u: any) => [u.id, [u.firstname, u.lastname].filter(Boolean).join(' ') || u.username]));
+    return list.map((e) => ({ ...e, user_name: e.user_id ? nameOf.get(e.user_id) ?? null : null }));
+  }
+
+  private async appendSyncLog(entry: Record<string, unknown>) {
+    const row = await this.settingRepo.findByPk('sync_log');
+    const list: any[] = Array.isArray(row?.value) ? row.value : [];
+    await this.settingRepo.upsert({ key: 'sync_log', value: [entry, ...list].slice(0, SYNC_LOG_MAX) });
   }
 
   // AdminGuard o'rniga: u ruxsat yo'qligida 401 qaytaradi, frontend esa har 401'da
@@ -163,7 +221,10 @@ export class SkladService implements OnApplicationBootstrap {
   }
 
   async getSettings() {
-    return { mode: await this.getMode(), sheet_id: DEFAULT_SHEET_ID };
+    const auto = await this.getAutoSync();
+    const next_auto_at =
+      auto.enabled && auto.last_auto_at ? new Date(new Date(auto.last_auto_at).getTime() + auto.interval_min * 60_000).toISOString() : null;
+    return { mode: await this.getMode(), sheet_id: DEFAULT_SHEET_ID, auto_sync: { ...auto, next_auto_at }, syncing: this.syncing };
   }
 
   async setMode(mode: SkladMode) {
@@ -683,7 +744,41 @@ export class SkladService implements OnApplicationBootstrap {
     return text;
   }
 
-  async sync(sourceId: number | undefined, payload: AuthPayload) {
+  async sync(sourceId: number | undefined, payload: AuthPayload, trigger: 'manual' | 'auto' = 'manual') {
+    if (this.syncing) {
+      throw skError(BadRequestException, 'SK_SYNC_RUNNING', 'Sinxron hozir bajarilmoqda — biroz kuting');
+    }
+    this.syncing = true;
+    const started = Date.now();
+    try {
+      const res = await this.runSync(sourceId, payload);
+      await this.appendSyncLog({
+        at: new Date().toISOString(),
+        trigger,
+        user_id: payload.user_id ?? null,
+        ok: res.results.filter((r) => r.ok).length,
+        failed: res.results.filter((r) => !r.ok).length,
+        ms: Date.now() - started,
+        sources: res.results.map((r) => ({ title: r.title, kind: r.kind, ok: r.ok, error: r.ok ? null : r.error, code: r.code ?? null })),
+      }).catch((e) => this.logger.warn(`Sklad sync log yozilmadi: ${e?.message}`));
+      return res;
+    } catch (e: any) {
+      await this.appendSyncLog({
+        at: new Date().toISOString(),
+        trigger,
+        user_id: payload.user_id ?? null,
+        ok: 0,
+        failed: 1,
+        ms: Date.now() - started,
+        error: e?.getResponse?.()?.message || e?.message || 'Xatolik',
+      }).catch(() => {});
+      throw e;
+    } finally {
+      this.syncing = false;
+    }
+  }
+
+  private async runSync(sourceId: number | undefined, payload: AuthPayload) {
     if ((await this.getMode()) === 'live') {
       throw skError(
         BadRequestException,

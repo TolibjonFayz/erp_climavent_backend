@@ -133,10 +133,21 @@ const same = (a: unknown, b: unknown) => {
 };
 const r2 = (n: number) => Math.round(n * 100) / 100;
 // Mahsulot qatorlari bir xil ko'rinishda (shartnoma va karta solishtirilganda farq faqat yozilishda bo'lmasin)
-const normItems = (list: Array<{ name?: string; unit?: string | null; qty?: number; price?: number }> | null | undefined): OtgruzkaItem[] =>
+const normItems = (
+  list: Array<{ name?: string; unit?: string | null; qty?: number; price?: number; shipped?: number | null }> | null | undefined,
+): OtgruzkaItem[] =>
   (list || [])
     .filter((i) => i && String(i.name || '').trim())
-    .map((i) => ({ name: String(i.name).trim(), unit: i.unit ? String(i.unit).trim() : null, qty: Number(i.qty) || 0, price: Number(i.price) || 0 }));
+    .map((i) => ({
+      name: String(i.name).trim(),
+      unit: i.unit ? String(i.unit).trim() : null,
+      qty: Number(i.qty) || 0,
+      price: Number(i.price) || 0,
+      // Qo'lda kiritilgan otgruzka soni — faqat berilgan bo'lsa (aks holda fakturalardan hisoblanadi)
+      ...(i.shipped != null && Number.isFinite(Number(i.shipped)) ? { shipped: Number(i.shipped) } : {}),
+    }));
+// Shartnoma mahsulotlari bilan solishtirish uchun — qo'lda kiritilgan otgruzka sonisiz
+const itemsKey = (list: Parameters<typeof normItems>[0]) => JSON.stringify(normItems(list).map(({ shipped: _s, ...r }) => r));
 
 // ─── Hisoblanadigan holatlar ─────────────────────────────────────────
 export function payStatusOf(o: Pick<OtgruzkaOrder, 'contract_sum' | 'paid_sum'>) {
@@ -1162,15 +1173,18 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
   /** Shartnoma mahsulotlari o'zgarsa — bog'langan kartada ham yangilanadi (karta mahsulotlari shartnomadan olingan bo'lsa) */
   async dogovorItemsChanged(d: Dogovor, before: unknown) {
     const items = normItems(d.items);
-    const prev = JSON.stringify(normItems(before as any));
-    if (JSON.stringify(items) === prev) return;
+    const prev = itemsKey(before as any);
+    if (itemsKey(items) === prev) return;
     const orders = await this.orderRepo.findAll({ where: { dogovor_id: d.id } });
     for (const o of orders) {
       // Kartada mahsulotlar qo'lda o'zgartirilgan bo'lsa — tegilmaydi
-      if (!o.items?.length || JSON.stringify(normItems(o.items)) === prev) {
+      if (!o.items?.length || itemsKey(o.items) === prev) {
         const recheck = items.length && o.shipped_pct < 1 && !o.final_status;
+        // Qo'lda kiritilgan otgruzka soni nom bo'yicha saqlanadi
+        const shippedBy = new Map((o.items || []).filter((i) => i.shipped != null).map((i) => [i.name, i.shipped]));
+        const next = items.map((i) => (shippedBy.has(i.name) ? { ...i, shipped: shippedBy.get(i.name) } : i));
         await o.update({
-          items: items.length ? items : null,
+          items: next.length ? next : null,
           ...(recheck ? this.skladRequest() : {}),
         });
       }
@@ -1632,6 +1646,16 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
     }
   }
 
+  /**
+   * Shartnoma (Dogovor) bo'limida Didox'dan olingan PDF bilan yaratilgan shartnoma —
+   * shu PDF bog'langan otgruzka kartasiga "Договор (Didox)" fayli bo'lib biriktiriladi.
+   */
+  async addDidoxByDogovor(dogovorId: number, file: Express.Multer.File, dto: DidoxFileDto, payload: AuthPayload) {
+    const o = await this.orderRepo.findOne({ where: { dogovor_id: dogovorId }, order: [['id', 'ASC']] });
+    if (!o) throw otError(NotFoundException, 'OT_NOT_FOUND', 'Bu shartnoma uchun otgruzka kartasi topilmadi');
+    return this.addDidoxFile(o.id, file, { ...dto, kind: 'contract' } as DidoxFileDto, payload);
+  }
+
   private async findDidox(id: number) {
     const f = await this.didoxRepo.findByPk(id);
     if (!f) throw otError(NotFoundException, 'OT_DIDOX_NOT_FOUND', 'Fayl topilmadi');
@@ -1683,11 +1707,18 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
 
   async didoxFileLink(id: number, mode: 'download' | 'inline' = 'inline') {
     const f = await this.findDidox(id);
-    const expiresIn = 300;
+    // 30 daqiqa: frontend havolani oldindan oladi (haqiqiy <a href> — brauzer pop-up deb bloklamaydi)
+    const expiresIn = 1800;
     const url = mode === 'download'
       ? await this.r2.getDownloadUrl(f.file_key, f.file_name, expiresIn)
-      : await this.r2.getInlineUrl(f.file_key, expiresIn);
+      : await this.r2.getInlineUrl(f.file_key, expiresIn, f.file_name);
     return { url, expiresIn };
+  }
+
+  /** Fayl tarkibi — PDF'ni brauzerda qayta o'qish uchun (R2 CORS'siz) */
+  async didoxFileContent(id: number) {
+    const f = await this.findDidox(id);
+    return { file: f, buffer: await this.r2.getObjectBuffer(f.file_key) };
   }
 
   // ─── Ombor tekshiruvi (yangi shartnoma → bildirishnoma) ────────────

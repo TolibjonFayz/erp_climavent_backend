@@ -23,6 +23,15 @@ export interface OtgruzkaDidoxFileAtr {
   poa_valid_until?: string | null;
   poa_company?: string | null;
   poa_inn?: string | null;
+  items?: DidoxItem[] | null;
+}
+
+/** Schyot-faktura qatori (PDF'dan o'qilgan): nom, soni, QQS bilan qiymati */
+export interface DidoxItem {
+  name: string;
+  qty: number;
+  unit?: string | null;
+  total?: number | null;
 }
 
 // Didox: otgruzka kartasiga biriktirilgan schyot-faktura va ishonchnoma fayllari (Cloudflare R2'da).
@@ -79,6 +88,10 @@ export class OtgruzkaDidoxFile extends Model<OtgruzkaDidoxFile, OtgruzkaDidoxFil
 
   @Column({ type: DataType.STRING(32), allowNull: true })
   declare poa_inn: string | null;
+
+  /** Schyot-fakturadagi tovarlar — kartadagi mahsulotlar bilan solishtirib, necha foizi fakturalangani hisoblanadi */
+  @Column({ type: DataType.JSONB, allowNull: true })
+  declare items: DidoxItem[] | null;
 
   @ForeignKey(() => User)
   @Column({ type: DataType.INTEGER, allowNull: true })

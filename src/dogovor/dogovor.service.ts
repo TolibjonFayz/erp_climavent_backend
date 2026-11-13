@@ -330,6 +330,12 @@ export class DogovorService {
     const dogovor = await this.findOne(id);
     this.assertCanModify(dogovor, payload);
     await dogovor.destroy();
+    // Ombor bo'limidagi va umumiy bildirishnomadagi shu shartnomaning "tekshirilsin" so'rovi ham o'chadi
+    try {
+      await this.otgruzka.dogovorRemoved(id, payload.user_id);
+    } catch (e: any) {
+      this.logger.warn(`Dogovor ${id}: ombor bildirishnomasi o'chirilmadi — ${e?.message}`);
+    }
     return { message: `Dogovor with id ${id} deleted successfully` };
   }
 

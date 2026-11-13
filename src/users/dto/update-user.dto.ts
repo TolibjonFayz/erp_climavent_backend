@@ -1,6 +1,6 @@
 import { ApiProperty, PartialType } from '@nestjs/swagger';
 import { LoginUserDto } from './login-user.dto';
-import { IsOptional, IsBoolean, IsObject } from 'class-validator';
+import { IsOptional, IsBoolean, IsObject, IsString, MaxLength } from 'class-validator';
 
 export class UpdateUserDto extends PartialType(LoginUserDto) {
   @ApiProperty({ example: 'John', description: 'Firstname of the user' })
@@ -45,4 +45,10 @@ export class UpdateUserDto extends PartialType(LoginUserDto) {
   @IsOptional()
   @IsObject()
   permissions?: any;
+
+  @ApiProperty({ example: 'Sotuv menejeri', description: 'Job position', required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  position?: string;
 }

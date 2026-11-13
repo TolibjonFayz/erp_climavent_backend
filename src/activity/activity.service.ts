@@ -61,6 +61,9 @@ export class ActivityService implements OnModuleInit {
     await this.sequelize.query(
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ',
     );
+    await this.sequelize.query(
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS position VARCHAR(120)',
+    );
     this.registerHooks();
   }
 

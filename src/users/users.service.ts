@@ -1,29 +1,44 @@
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LoginUserDto } from './dto/login-user.dto';
-import { InjectModel } from '@nestjs/sequelize';
+import { InjectConnection, InjectModel } from '@nestjs/sequelize';
 import {
   BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { QueryTypes } from 'sequelize';
 import { User } from './models/user.model';
 import * as bcrypt from 'bcrypt';
 import { SessionsService } from './sessions.service';
 import { Response } from 'express';
+import { Sequelize } from 'sequelize-typescript';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserPasswordDto } from './dto/update-user-password.dto';
 import { stripSecrets } from 'src/common/ownership';
 import { ActivityService, ClientInfo } from 'src/activity/activity.service';
 
+// Lavozim: bo'sh joylar olib tashlanadi, bo'sh satr — lavozim yo'q (null)
+const normPosition = (v: unknown) => {
+  if (v === undefined) return undefined;
+  const s = String(v ?? '').replace(/\s+/g, ' ').trim();
+  return s ? s.slice(0, 120) : null;
+};
+
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
   constructor(
     @InjectModel(User) private readonly UsersRepository: typeof User,
     private readonly sessions: SessionsService,
     private readonly activity: ActivityService,
+    @InjectConnection() private readonly sequelize: Sequelize,
   ) {}
+
+  // sequelize sync mavjud jadvalga yangi ustun qo'shmaydi
+  async onModuleInit() {
+    await this.sequelize.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS position VARCHAR(120)');
+  }
   // Register user
   async registerUser(createUserDto: CreateUserDto, res: Response) {
     //Check if user exists
@@ -42,6 +57,7 @@ export class UsersService {
     //Create new user
     const newUser = await this.UsersRepository.create({
       ...createUserDto,
+      position: normPosition(createUserDto.position) ?? null,
       password: hashedPassword,
       is_admin: false,
       refresh_token: '',
@@ -147,6 +163,7 @@ export class UsersService {
 
   //Update user by id
   async updateUserById(id: number, updateUserDto: UpdateUserDto) {
+    if (updateUserDto.position !== undefined) updateUserDto.position = normPosition(updateUserDto.position);
     const updatedUser = await this.UsersRepository.update(updateUserDto, {
       where: { id: id },
       returning: true,

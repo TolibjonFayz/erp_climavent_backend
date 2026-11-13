@@ -72,6 +72,7 @@ export interface OtgruzkaOrderAtr {
   sklad_checked_at?: Date | null;
   sklad_checked_by?: number | null;
   sklad_check_note?: string | null;
+  sklad_dogovor_id?: number | null;
   created_by?: number | null;
 }
 
@@ -216,6 +217,10 @@ export class OtgruzkaOrder extends Model<OtgruzkaOrder, OtgruzkaOrderAtr> {
 
   @Column({ type: DataType.TEXT, allowNull: true })
   declare sklad_check_note: string | null;
+
+  // Tekshiruv so'rovini qaysi ERP shartnomasi ochgan (shartnoma o'chirilsa — so'rov ham bekor bo'ladi)
+  @Column({ type: DataType.INTEGER, allowNull: true })
+  declare sklad_dogovor_id: number | null;
 
   @ForeignKey(() => User)
   @Column({ type: DataType.INTEGER, allowNull: true })

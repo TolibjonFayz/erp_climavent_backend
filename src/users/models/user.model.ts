@@ -13,6 +13,7 @@ interface UserAtr {
   is_blocked?: boolean;
   refresh_token: string;
   permissions?: any;
+  position?: string | null;
 }
 
 // Parol va refresh token hech qaysi javobga (include: { all: true } orqali ham) tushmasin.
@@ -78,4 +79,10 @@ export class User extends Model<User, UserAtr> {
   @ApiProperty({ example: '2026-10-30T09:15:00Z', description: 'Last activity time' })
   @Column({ type: DataType.DATE, allowNull: true })
   declare last_seen_at: Date | null;
+
+  // Lavozimi ("Sotuv menejeri", "Omborchi" …) — faqat admin belgilaydi. Kim kiritganini ko'rsatadigan
+  // joylarda (to'lovlar, izohlar, fayllar) login va F.I.Sh. bilan birga chiqadi
+  @ApiProperty({ example: 'Sotuv menejeri', description: 'Job position of the user' })
+  @Column({ type: DataType.STRING(120), allowNull: true })
+  declare position: string | null;
 }

@@ -114,6 +114,10 @@ export class UsersController {
     if (!req?.user?.is_admin && updateUserDto.permissions !== undefined) {
       throw new ForbiddenException("Ruxsatlarni faqat admin o'zgartira oladi");
     }
+    // Lavozimni ham faqat admin belgilaydi
+    if (!req?.user?.is_admin && updateUserDto.position !== undefined) {
+      throw new ForbiddenException("Lavozimni faqat admin o'zgartira oladi");
+    }
     const result = await this.usersService.updateUserById(id, updateUserDto);
     // Bloklangan xodimning barcha qurilmalardagi sessiyalari yopiladi
     if (updateUserDto.is_blocked === true) await this.sessions.revokeAll(Number(id));

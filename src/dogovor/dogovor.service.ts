@@ -326,11 +326,19 @@ export class DogovorService {
     return this.findOne(id);
   }
 
-  async remove(id: number, payload: AuthPayload): Promise<{ message: string }> {
+  async remove(id: number, payload: AuthPayload): Promise<{ message: string; sklad_checks_removed: number }> {
     const dogovor = await this.findOne(id);
     this.assertCanModify(dogovor, payload);
-    await dogovor.destroy();
-    return { message: `Dogovor with id ${id} deleted successfully` };
+    // Shartnoma bilan birga u omborga yuborgan tekshiruv so'rovi ham o'chadi: "Ombor → Tekshiruv"
+    // ro'yxatidan ham, umumiy bildirishnomalardan ham. Bitta tranzaksiyada — yarim holat qolmaydi.
+    const res = await this.dogovorRepository.sequelize!.transaction(async (transaction) => {
+      await dogovor.destroy({ transaction });
+      return this.otgruzka.dogovorRemoved(id, payload.user_id, transaction);
+    });
+    return {
+      message: `Dogovor with id ${id} deleted successfully`,
+      sklad_checks_removed: res.sklad_cleared,
+    };
   }
 
   // ─── Excel import ───────────────────────────────────────────────────

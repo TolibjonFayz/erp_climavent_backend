@@ -198,42 +198,93 @@ export function overItems(card: CardItem[] | null | undefined, files: InvoiceFil
   return out;
 }
 
+const jaccard = (a: unknown, b: unknown) => {
+  const wa = words(a);
+  const wb = words(b);
+  if (!wa.size || !wb.size) return 0;
+  let common = 0;
+  for (const x of wa) if (wb.has(x)) common++;
+  return common / (wa.size + wb.size - common);
+};
+
+/**
+ * Nomga eng mos qator raqami (yo'q bo'lsa -1). Model kodi bir nechta qatorda uchrasa (uzun tavsif ichida
+ * boshqa tovar kodi bo'lishi mumkin) — so'zlari eng ko'p mos kelgani tanlanadi.
+ */
+export function bestMatchIndex(name: unknown, items: CardItem[]): number {
+  let best = -1;
+  let key: [number, number] = [0, 0];
+  items.forEach((it, k) => {
+    if (!it?.name) return;
+    const s = nameScore(name, it.name);
+    if (s < MATCH_MIN) return;
+    const j = jaccard(name, it.name);
+    if (s > key[0] + 1e-9 || (Math.abs(s - key[0]) <= 1e-9 && j > key[1] + 1e-9)) {
+      best = k;
+      key = [s, j];
+    }
+  });
+  return best;
+}
+
 /**
  * Mahsulot qaysi shartnomalarda va nechta yozilgan. Har shartnomada eng o'xshash qator(lar) olinadi
  * (bir xil darajadagi bir nechta qator bo'lsa — soni qo'shiladi).
  */
-export function contractsWith(name: string, candidates: ContractCandidate[], currentOrderId: number | null): OverContract[] {
+export function contractsWith(
+  name: string,
+  candidates: ContractCandidate[],
+  currentOrderId: number | null,
+  currentIndex?: number,
+): OverContract[] {
   const out: OverContract[] = [];
+  const target = words(name);
+  // So'zlar o'xshashligi (Jaccard) — model kodi bir nechta qatorda uchrasa, eng yaqinini tanlash uchun.
+  // Masalan uzun "Кондиционер КЦКП … Вентилятор RH40C …" tavsifi va alohida "Вентилятор RH40C" qatori
+  // ikkalasi ham kod bo'yicha mos keladi, lekin bir xil tovar emas.
+  const closeness = (other: unknown) => {
+    const w = words(other);
+    if (!target.size || !w.size) return 0;
+    let common = 0;
+    for (const x of w) if (target.has(x)) common++;
+    return common / (target.size + w.size - common);
+  };
   for (const c of candidates) {
-    let best = 0;
-    let qty = 0;
-    let unit: string | null = null;
-    let names: string[] = [];
-    for (const it of c.items || []) {
-      if (!it?.name) continue;
-      const s = nameScore(name, it.name);
-      if (s < MATCH_MIN || s < best) continue;
-      if (s > best) {
-        best = s;
-        qty = 0;
-        names = [];
-        unit = null;
+    const isCurrent = currentOrderId != null && c.order_id === currentOrderId;
+    const items = c.items || [];
+    let picked: CardItem[] = [];
+    if (isCurrent && currentIndex != null && items[currentIndex]?.name) {
+      // Ko'rib turilgan shartnoma — aynan shu qator
+      picked = [items[currentIndex]];
+    } else {
+      let best: [number, number] = [0, 0];
+      for (const it of items) {
+        if (!it?.name) continue;
+        const s = nameScore(name, it.name);
+        if (s < MATCH_MIN) continue;
+        const k: [number, number] = [s, closeness(it.name)];
+        const cmp = k[0] - best[0] || k[1] - best[1];
+        if (cmp > 1e-9) {
+          best = k;
+          picked = [it];
+        } else if (Math.abs(cmp) <= 1e-9 && best[0] > 0) {
+          picked.push(it); // bir xil nomli qatorlar — soni qo'shiladi
+        }
       }
-      qty += num(it.qty);
-      unit = unit || it.unit || null;
-      if (!names.includes(it.name)) names.push(it.name);
     }
-    if (!best) continue;
+    if (!picked.length) continue;
+    const names: string[] = [];
+    for (const it of picked) if (it.name && !names.includes(it.name)) names.push(it.name);
     out.push({
       order_id: c.order_id,
       dogovor_id: c.dogovor_id,
       dogovor_number: c.dogovor_number,
       dogovor_date: c.dogovor_date ? String(c.dogovor_date).slice(0, 10) : null,
       client_name: c.client_name,
-      qty: round3(qty),
-      unit,
+      qty: round3(picked.reduce((a, it) => a + num(it.qty), 0)),
+      unit: picked.find((it) => it.unit)?.unit || null,
       names,
-      current: currentOrderId != null && c.order_id === currentOrderId,
+      current: isCurrent,
     });
   }
   // Ko'rib turilgan shartnoma birinchi, qolganlari — yangisi tepada

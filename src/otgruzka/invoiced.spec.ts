@@ -1,4 +1,4 @@
-import { contractsWith, ContractCandidate, invoicedRows, overItems, sortInvoices } from './invoiced';
+import { bestMatchIndex, contractsWith, ContractCandidate, invoicedRows, overItems, sortInvoices } from './invoiced';
 
 const KCKP = 'Кондиционер КЦКП-6,3 L=6180м3/ч, P=600Па';
 const card = [
@@ -55,6 +55,30 @@ describe('invoiced', () => {
   it("sanasiz fakturalar oxirida, keyin id bo'yicha", () => {
     const sorted = sortInvoices([inv(3, 'c', null, []), inv(2, 'b', '2026-02-01', []), inv(1, 'a', '2026-03-01', []), inv(0, 'z', null, [])]);
     expect(sorted.map((f) => f.invoice_number)).toEqual(['b', 'a', 'z', 'c']);
+  });
+
+  it("model kodi boshqa qator tavsifida uchrasa — eng yaqin qator olinadi (yig'ilmaydi)", () => {
+    const long = 'Кондиционер КЦКП-6,3 … д) секция вентилятора: Вентилятор RH40C; 4,0кВт';
+    const items = [
+      { name: long, unit: 'шт', qty: 1 },
+      { name: 'Вентилятор RH40C', unit: 'шт', qty: 3 },
+    ];
+    const pool: ContractCandidate[] = [
+      { order_id: 1, dogovor_id: 1, dogovor_number: '1', dogovor_date: null, client_name: 'A', client_inn: null, items },
+      { order_id: 2, dogovor_id: 2, dogovor_number: '2', dogovor_date: null, client_name: 'A', client_inn: null, items },
+    ];
+    const res = contractsWith(long, pool, 1, 0);
+    expect(res.map((c) => [c.dogovor_number, c.qty, c.names])).toEqual([
+      ['1', 1, [long]],
+      ['2', 1, [long]],
+    ]);
+  });
+
+  it('jadval qatori eng mos mahsulotga bog\'lanadi (uzun tavsif ichidagi kod chalg\'itmaydi)', () => {
+    const items = [{ name: 'Кондиционер КЦКП-6,3 … секция вентилятора: Вентилятор RH40C; 4,0кВт', qty: 1 }, { name: 'Вентилятор RH40C', qty: 3 }];
+    expect(bestMatchIndex('Вентилятор RH40C', items)).toBe(1);
+    expect(bestMatchIndex('КЦКП-6,3 кондиционер приточный', items)).toBe(0);
+    expect(bestMatchIndex('Клапан АВК', items)).toBe(-1);
   });
 
   it("tovar qaysi shartnomalarda va nechta yozilgani — joriy shartnoma birinchi", () => {

@@ -27,7 +27,7 @@ import {
   UpdatePaymentDto,
 } from './dto/otgruzka.dto';
 import { OtgruzkaDidoxFile } from './models/otgruzka-didox-file.model';
-import { ContractCandidate, contractsWith, MATCH_MIN, nameScore, OverItem, overItems } from './invoiced';
+import { bestMatchIndex, ContractCandidate, contractsWith, OverItem, overItems } from './invoiced';
 import { OtgruzkaLine } from './models/otgruzka-line.model';
 import { OtgruzkaNote } from './models/otgruzka-note.model';
 import { OtgruzkaItem, OtgruzkaOrder, OtgruzkaOrderAtr } from './models/otgruzka-order.model';
@@ -944,17 +944,12 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
         })
       : [];
     const over = await this.overByOrder(orders as any);
+    const cardBy = new Map(orders.map((o) => [o.id, this.itemsOf(o as any)]));
     return lines.map((l) => {
       const list = l.order_id != null ? over.get(l.order_id) || [] : [];
-      let hit: OverItem | null = null;
-      let best = 0;
-      for (const x of list) {
-        const s = nameScore(l.item_name, x.name);
-        if (s >= MATCH_MIN && s > best) {
-          best = s;
-          hit = x;
-        }
-      }
+      // Qator kartadagi qaysi mahsulotga eng mos — o'sha mahsulot ortiqcha bo'lsagina belgilanadi
+      const idx = list.length ? bestMatchIndex(l.item_name, cardBy.get(l.order_id!) || []) : -1;
+      const hit: OverItem | null = list.find((x) => x.index === idx) || null;
       return { ...(l.toJSON() as any), over: hit };
     });
   }
@@ -1011,7 +1006,7 @@ export class OtgruzkaService implements OnApplicationBootstrap, OnModuleDestroy 
         items: this.itemsOf(o),
       };
       const pool = [own, ...candidates.filter((c) => c.order_id !== o.id && sameClient(own, c))];
-      for (const x of list) x.contracts = contractsWith(x.name, pool, o.id);
+      for (const x of list) x.contracts = contractsWith(x.name, pool, o.id, x.index);
       res.set(o.id, list);
     }
     return res;
